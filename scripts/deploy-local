@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-target="${HOME}/.config/omarchy/plugins/davidhbigelow.gitdlmon"
+target="${HOME}/.config/omarchy/plugins/davidhbigelow.ghrepotracker"
 runtime_files=(
   manifest.json
   BarWidget.qml

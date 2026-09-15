@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/davidhbigelow/gitdlmon/schemas/repository-cache.schema.json",
+  "$id": "https://github.com/davidhbigelow/GitHubRepoTracker/schemas/repository-cache.schema.json",
   "title": "GitHub Download Monitor Repository Cache",
   "type": "object",
   "additionalProperties": false,
