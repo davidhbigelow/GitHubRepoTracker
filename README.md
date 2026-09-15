@@ -29,6 +29,12 @@ normalized compare view.
 omarchy plugin add https://github.com/davidhbigelow/GitHubRepoTracker.git --enable
 ```
 
+## Remove
+
+```bash
+omarchy plugin remove davidhbigelow.ghrepotracker
+```
+
 ## Configuration
 
 Repositories are managed from the panel (add button, or trash to remove), or
