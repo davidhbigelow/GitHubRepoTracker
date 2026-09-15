@@ -8,7 +8,8 @@ import "Model.js" as Model
 // Rendered with QtQuick.Shapes (Canvas does not paint in this shell).
 // The line, gradient, and data-point dots take their color from cumulative
 // start-to-end growth (up = success, down = warning, flat/1-point = neutral).
-// Hovering a data point shows a tooltip with its date and formatted value.
+// Hovering draws a vertical cursor line and shows a tooltip (date +
+// period-worded value delta) when the line intersects a data point.
 Item {
   id: root
 
@@ -22,6 +23,9 @@ Item {
   property color warningColor: root.lineColor
   property bool forceSuccess: false
   property bool cohortVolumes: false
+  // Active timeline period ("daily" | "weekly" | "monthly" | "annual");
+  // drives the tooltip's date format and delta wording.
+  property string period: "daily"
   property real lineWidth: 1.8
   property real fillAlpha: 0.22
   property real topPad: 4
@@ -38,8 +42,10 @@ Item {
   property string peakLabel: ""
 
   // Hover state (index into root.allPts, -1 = none) and the point's position.
+  // cursorX is the mouse's horizontal position for the vertical guide line.
   property int hoverIdx: -1
   property point hoverPos: Qt.point(0, 0)
+  property real cursorX: NaN
 
   implicitHeight: Style.space(110)
   implicitWidth: Style.space(300)
@@ -70,7 +76,7 @@ Item {
     var pts = root.points || []
     if (!pts.length || root.hoverIdx < 0 || root.hoverIdx >= pts.length) return ""
     var p = pts[root.hoverIdx]
-    return Model.formatDateShort(p.t, "daily") + " · " + Model.formatNumber(p.v)
+    return Model.formatDateShort(p.t, root.period) + " · " + Model.formatNumber(p.v)
   }
 
   // Delta between consecutive points: points[i].v - points[i-1].v (NaN when
@@ -84,6 +90,8 @@ Item {
   readonly property real tipDeltaValue: root.deltaBetween(root.hoverIdx)
   readonly property real tipDeltaDays: root.elapsedDaysBetween(root.hoverIdx)
   readonly property bool hasTipDelta: !root.cohortVolumes && !isNaN(root.tipDeltaValue)
+  readonly property string tipDeltaArrow: isNaN(root.tipDeltaValue) ? ""
+    : (root.tipDeltaValue > 0 ? "▲" : (root.tipDeltaValue < 0 ? "▼" : "—"))
   readonly property string tipDeltaText: root.deltaLabel(root.tipDeltaValue, root.tipDeltaDays)
 
   function elapsedDaysBetween(i) {
@@ -94,16 +102,24 @@ Item {
 
   function deltaLabel(d, days) {
     if (isNaN(d)) return ""
-    var rate = !isNaN(days) ? " · " + Model.formatRate(d / days) + "/day" : ""
-    if (d > 0) return "▲ " + Model.formatDelta(d) + rate
-    if (d < 0) return "▼ " + Model.formatDelta(d) + rate
+    if (d > 0 || d < 0) {
+      var body = Model.formatDelta(d)
+      // Daily buckets span a single day, so a per-day rate is meaningful.
+      // Longer periods bucket one point per week/month/year: the delta is
+      // that whole period's change, so label it in period terms instead.
+      if (root.period === "daily")
+        return body + (!isNaN(days) ? " · " + Model.formatRate(d / days) + "/day" : "")
+      if (root.period === "weekly") return body + " this week"
+      if (root.period === "monthly") return body + " this month"
+      return body + " this year"
+    }
     return "—"
   }
 
   function deltaColor(d) {
     if (d > 0) return root.successColor
     if (d < 0) return root.warningColor
-    return root.lineColor
+    return Color.foreground
   }
 
   function build() {
@@ -165,21 +181,33 @@ Item {
     return out
   }
 
-  function hoverAt(mx, my) {
+  // Horizontal catch radius around a data point: half the closest gap
+  // between adjacent points (so dense charts always claim the nearest one),
+  // clamped so sparse charts only pop the tooltip when the cursor line
+  // actually reaches the point.
+  readonly property real hoverRadius: {
+    var pts = root.allPts
+    if (!pts || pts.length < 2) return Style.space(12)
+    var gap = Infinity
+    for (var i = 1; i < pts.length; i++) gap = Math.min(gap, pts[i].x - pts[i - 1].x)
+    return Math.max(Style.space(8), Math.min(gap / 2, Style.space(28)))
+  }
+
+  // Track the cursor's x for the guide line and claim the data point it
+  // horizontally intersects (nearest by x within the catch radius).
+  function hoverAt(mx) {
+    root.cursorX = mx
     var pts = root.allPts
     if (!pts || !pts.length) { root.hoverIdx = -1; return }
     var best = -1
-    var bestD = root.dotRadius * 4
+    var bestD = Infinity
     for (var i = 0; i < pts.length; i++) {
-      var dx = pts[i].x - mx, dy = pts[i].y - my
-      var d = Math.sqrt(dx * dx + dy * dy)
+      var d = Math.abs(pts[i].x - mx)
       if (d < bestD) { bestD = d; best = i }
     }
-    root.hoverIdx = best
-    if (best >= 0) root.hoverPos = Qt.point(pts[best].x, pts[best].y)
+    root.hoverIdx = bestD <= root.hoverRadius ? best : -1
+    if (root.hoverIdx >= 0) root.hoverPos = Qt.point(pts[root.hoverIdx].x, pts[root.hoverIdx].y)
   }
-
-  readonly property real dotRadius: 2
 
   Text {
     id: emptyHint
@@ -264,7 +292,8 @@ Item {
       required property var modelData
       required property int index
       property bool isLast: index === root.allPts.length - 1
-      width: (isLast ? (root.hasLine ? 5 : 9) : 3)
+      property bool hovered: index === root.hoverIdx
+      width: hovered ? 7 : (isLast ? (root.hasLine ? 5 : 9) : 3)
       height: width
       radius: width / 2
       color: root.trendColor
@@ -287,22 +316,37 @@ Item {
     font.bold: true
   }
 
-  // Hover handling for the data-point tooltip.
+  // Hover handling for the guide line + data-point tooltip.
   MouseArea {
     anchors.fill: parent
     hoverEnabled: true
     visible: root.hasPoint
-    onPositionChanged: (mouse) => root.hoverAt(mouse.x, mouse.y)
-    onExited: root.hoverIdx = -1
+    onPositionChanged: (mouse) => root.hoverAt(mouse.x)
+    onExited: {
+      root.hoverIdx = -1
+      root.cursorX = NaN
+    }
+  }
+
+  // Vertical guide line at the cursor; snaps onto the hovered data point so
+  // the line, dot, and tooltip read as one crosshair.
+  Rectangle {
+    visible: root.hasPoint && !isNaN(root.cursorX)
+    width: 1
+    x: (root.hoverIdx >= 0 ? root.hoverPos.x : root.cursorX) - 0.5
+    y: root.topPad
+    height: root.height - root.topPad - root.bottomPad
+    color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.35)
   }
 
   // Tooltip chip showing the hovered point's date + formatted value, with a
-  // delta line for the change versus the previous period.
+  // delta line for the change versus the previous period. Sized up and kept
+  // to full-contrast foreground/success/warning colors for readability.
   Item {
     id: tip
     visible: root.hoverIdx >= 0 && root.tooltipText !== ""
-    width: Math.max(tipText.implicitWidth, tipDelta.implicitWidth) + Style.space(12)
-    height: tipText.implicitHeight + (root.hasTipDelta ? tipDelta.implicitHeight + Style.space(2) : 0) + Style.space(6)
+    width: Math.max(tipText.implicitWidth, tipDelta.implicitWidth) + Style.space(16)
+    height: tipText.implicitHeight + (root.hasTipDelta ? tipDelta.implicitHeight + Style.space(2) : 0) + Style.space(10)
     x: Math.max(0, Math.min(root.width - width, root.hoverPos.x + Style.space(12)))
     y: Math.max(0, Math.min(root.height - height, root.hoverPos.y - height - Style.space(6)))
     z: 20
@@ -311,7 +355,7 @@ Item {
       anchors.fill: parent
       radius: Style.space(4)
       color: Color.background
-      border.color: Qt.rgba(root.trendColor.r, root.trendColor.g, root.trendColor.b, 0.5)
+      border.color: Qt.rgba(root.trendColor.r, root.trendColor.g, root.trendColor.b, 0.7)
       border.width: 1
     }
 
@@ -326,18 +370,36 @@ Item {
         text: root.tooltipText
         color: Color.foreground
         font.family: Style.font.family
-        font.pixelSize: Style.space(10)
+        font.pixelSize: Style.font.subtitle
+        font.bold: true
       }
 
-      Text {
+      // Delta line: trend-colored arrow + full-foreground number so the
+      // value itself stays high-contrast even when the theme's green/red
+      // are dim. Same size as the date/value line.
+      Row {
         id: tipDelta
         anchors.horizontalCenter: parent.horizontalCenter
+        spacing: Style.space(3)
         visible: root.hasTipDelta
-        textFormat: Text.PlainText
-        text: root.tipDeltaText
-        color: root.deltaColor(root.tipDeltaValue)
-        font.family: Style.font.family
-        font.pixelSize: Style.space(9)
+
+        Text {
+          textFormat: Text.PlainText
+          text: root.tipDeltaArrow
+          color: root.deltaColor(root.tipDeltaValue)
+          font.family: Style.font.family
+          font.pixelSize: Style.font.subtitle
+          font.bold: true
+        }
+
+        Text {
+          textFormat: Text.PlainText
+          text: root.tipDeltaText
+          color: Color.foreground
+          font.family: Style.font.family
+          font.pixelSize: Style.font.subtitle
+          font.bold: true
+        }
       }
     }
   }

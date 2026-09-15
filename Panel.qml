@@ -849,6 +849,7 @@ Panel {
                 Behavior on opacity { NumberAnimation { duration: 250 } }
                 busy: root.refreshing
                 points: root.chartPoints
+                period: root.period
                 domainStart: root.chartDomain.start
                 domainEnd: root.chartDomain.end
                 slotCount: root.chartDomain.slots
