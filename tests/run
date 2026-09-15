@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+python3 "$root/scripts/validate_manifest.py" "$root"
+python3 -m json.tool "$root/manifest.json" >/dev/null
+python3 -m json.tool "$root/.omarchy-workbench.json" >/dev/null
+python3 -m json.tool "$root/schemas/repository-cache.schema.json" >/dev/null
+PYTHONPATH="$root" python3 -m unittest discover -s "$root/tests" -p 'test_*.py'
+node "$root/tests/model.test.js"
+
+if command -v omarchy >/dev/null 2>&1; then
+  omarchy plugin validate "$root"
+fi
+
+printf 'All portable plugin checks passed.\n'

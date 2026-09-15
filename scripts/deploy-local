@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+target="${HOME}/.config/omarchy/plugins/davidhbigelow.gitdlmon"
+runtime_files=(
+  manifest.json
+  BarWidget.qml
+  CategoryHeader.qml
+  CompareChart.qml
+  ControlIcon.qml
+  MetricIcon.qml
+  Model.js
+  Panel.qml
+  RepoRow.qml
+  Service.qml
+  Sparkline.qml
+  TotalsChart.qml
+  fetch_star_cohorts.py
+)
+
+python3 "$root/scripts/validate_manifest.py" "$root"
+mkdir -p "$target"
+
+for file in "${runtime_files[@]}"; do
+  install -m 0644 "$root/$file" "$target/$file"
+done
+
+if command -v omarchy >/dev/null 2>&1; then
+  omarchy plugin validate "$target"
+fi
+
+printf 'Deployed %s to %s\n' "${runtime_files[*]}" "$target"

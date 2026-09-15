@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/davidhbigelow/gitdlmon/schemas/repository-cache.schema.json",
+  "title": "GitHub Download Monitor Repository Cache",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "repo", "category", "added", "created", "current", "status", "history", "cohorts", "starCohorts", "starCohortsUpdatedAt"],
+  "properties": {
+    "schemaVersion": { "const": 3 },
+    "repo": { "type": "string", "pattern": "^[^/]+/[^/]+$" },
+    "category": { "enum": ["mine", "others"] },
+    "added": { "type": "string", "format": "date-time" },
+    "created": { "$ref": "#/$defs/optionalTimestamp" },
+    "current": { "$ref": "#/$defs/current" },
+    "status": { "$ref": "#/$defs/status" },
+    "history": { "$ref": "#/$defs/history" },
+    "cohorts": { "$ref": "#/$defs/cohorts" },
+    "starCohorts": { "$ref": "#/$defs/starCohorts" },
+    "starCohortsUpdatedAt": { "$ref": "#/$defs/optionalTimestamp" }
+  },
+  "$defs": {
+    "counter": { "type": "number", "minimum": 0 },
+    "optionalTimestamp": {
+      "type": "string",
+      "anyOf": [{ "format": "date-time" }, { "const": "" }]
+    },
+    "current": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["downloads", "stars", "releases", "assets", "observedAt"],
+      "properties": {
+        "downloads": { "$ref": "#/$defs/counter" },
+        "stars": { "$ref": "#/$defs/counter" },
+        "releases": { "$ref": "#/$defs/counter" },
+        "assets": { "$ref": "#/$defs/counter" },
+        "observedAt": { "$ref": "#/$defs/optionalTimestamp" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lastAttemptAt", "lastSuccessAt", "error"],
+      "properties": {
+        "lastAttemptAt": { "$ref": "#/$defs/optionalTimestamp" },
+        "lastSuccessAt": { "$ref": "#/$defs/optionalTimestamp" },
+        "error": { "type": "string" }
+      }
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bucket", "observedAt"],
+      "properties": {
+        "bucket": { "type": "string" },
+        "observedAt": { "type": "string", "format": "date-time" },
+        "downloads": { "$ref": "#/$defs/counter" },
+        "stars": { "$ref": "#/$defs/counter" },
+        "releases": { "$ref": "#/$defs/counter" },
+        "assets": { "$ref": "#/$defs/counter" }
+      },
+      "anyOf": [
+        { "required": ["downloads"] },
+        { "required": ["stars"] },
+        { "required": ["releases"] },
+        { "required": ["assets"] }
+      ]
+    },
+    "history": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["days", "weeks", "months", "years"],
+      "properties": {
+        "days": { "type": "array", "maxItems": 30, "items": { "$ref": "#/$defs/observation" } },
+        "weeks": { "type": "array", "maxItems": 8, "items": { "$ref": "#/$defs/observation" } },
+        "months": { "type": "array", "maxItems": 12, "items": { "$ref": "#/$defs/observation" } },
+        "years": { "type": "array", "items": { "$ref": "#/$defs/observation" } }
+      }
+    },
+    "cohort": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bucket", "downloads", "releases", "assets"],
+      "properties": {
+        "bucket": { "type": "string" },
+        "downloads": { "$ref": "#/$defs/counter" },
+        "releases": { "$ref": "#/$defs/counter", "exclusiveMinimum": 0 },
+        "assets": { "$ref": "#/$defs/counter" }
+      }
+    },
+    "cohorts": {
+      "type": "object",
+      "description": "Current lifetime release-asset totals grouped by release publication bucket; not downloads occurring within each period.",
+      "additionalProperties": false,
+      "required": ["days", "weeks", "months", "years"],
+      "properties": {
+        "days": { "type": "array", "maxItems": 30, "items": { "$ref": "#/$defs/cohort" } },
+        "weeks": { "type": "array", "maxItems": 8, "items": { "$ref": "#/$defs/cohort" } },
+        "months": { "type": "array", "maxItems": 12, "items": { "$ref": "#/$defs/cohort" } },
+        "years": { "type": "array", "items": { "$ref": "#/$defs/cohort" } }
+      }
+    },
+    "starCohort": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bucket", "stars"],
+      "properties": {
+        "bucket": { "type": "string" },
+        "stars": { "type": "integer", "exclusiveMinimum": 0 }
+      }
+    },
+    "starCohorts": {
+      "type": "object",
+      "description": "Star acquisitions expanded from GitHub's privacy-safe weekly history. Unstars are unavailable, so this is not historical net stargazer count.",
+      "additionalProperties": false,
+      "required": ["days", "weeks", "months", "years"],
+      "properties": {
+        "days": { "type": "array", "maxItems": 30, "items": { "$ref": "#/$defs/starCohort" } },
+        "weeks": { "type": "array", "maxItems": 8, "items": { "$ref": "#/$defs/starCohort" } },
+        "months": { "type": "array", "maxItems": 12, "items": { "$ref": "#/$defs/starCohort" } },
+        "years": { "type": "array", "items": { "$ref": "#/$defs/starCohort" } }
+      }
+    }
+  }
+}
