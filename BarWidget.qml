@@ -14,7 +14,7 @@ import "Model.js" as Model
 // layout entry:  "settings": { "repo": "owner/repo" }.
 BarWidget {
   id: root
-  moduleName: "davidhbigelow.ghrepotracker"
+  moduleName: "ghrepo.tracker"
 
   readonly property string home: Quickshell.env("HOME") || ""
   readonly property var storePath: Model.pathsFor(home).storePath

@@ -15,7 +15,7 @@ import "Model.js" as Model
 // totals, sparklines, and colors all update the moment a cache refresh lands.
 Panel {
   id: root
-  moduleName: "davidhbigelow.ghrepotracker"
+  moduleName: "ghrepo.tracker"
   manageIpc: false
 
   // Text on the dialog card must pair with the CARD background

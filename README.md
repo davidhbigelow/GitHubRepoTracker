@@ -32,13 +32,13 @@ omarchy plugin add https://github.com/davidhbigelow/GitHubRepoTracker.git --enab
 ## Update
 
 ```bash
-omarchy plugin update davidhbigelow.ghrepotracker
+omarchy plugin update ghrepo.tracker
 ```
 
 ## Remove
 
 ```bash
-omarchy plugin remove davidhbigelow.ghrepotracker
+omarchy plugin remove ghrepo.tracker
 ```
 
 ## Configuration

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "id": "davidhbigelow.ghrepotracker",
+  "id": "ghrepo.tracker",
   "name": "GitHub Repo Tracker",
   "version": "0.1.0",
   "author": "David (Deuce) Bigelow",
