@@ -1,4 +1,7 @@
-# GitHub Download Monitor
+# GitHub Repo Tracker
+
+
+<img width="385" height="450" alt="preview" src="https://github.com/user-attachments/assets/25c061f7-18b0-4032-bbf6-6676c2d26968" />
 
 An Omarchy 4 bar widget that tracks cumulative GitHub release-asset downloads,
 stars, and releases. It keeps daily observations, groups repositories into
