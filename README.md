@@ -63,12 +63,8 @@ omarchy plugin update davidhbigelow.ghrepotracker --yes
 omarchy plugin remove davidhbigelow.ghrepotracker --yes
 ```
 
-Removing the plugin keeps your settings and history. To delete them too:
-
-```bash
-rm -rf ~/.local/state/omarchy/ghrepotracker
-rm -f ~/.config/omarchy/settings/ghrepotracker.json
-```
+Removing the plugin keeps your settings and tracked-repo history (see
+[Configuration](#configuration) for their locations) in case you reinstall.
 
 ## Notes
 
