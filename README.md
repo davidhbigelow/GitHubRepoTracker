@@ -29,12 +29,6 @@ normalized compare view.
 omarchy plugin add https://github.com/davidhbigelow/GitHubRepoTracker.git --enable
 ```
 
-For local development, deploy this checkout with:
-
-```bash
-./scripts/deploy-local
-```
-
 ## Configuration
 
 Repositories are managed from the panel (add button, or trash to remove), or
@@ -55,16 +49,6 @@ by editing the settings file directly:
 ```
 
 `refreshHours` controls how often cached data is refreshed from the GitHub API.
-
-## Update and remove
-
-```bash
-omarchy plugin update davidhbigelow.ghrepotracker --yes
-omarchy plugin remove davidhbigelow.ghrepotracker --yes
-```
-
-Removing the plugin keeps your settings and tracked-repo history (see
-[Configuration](#configuration) for their locations) in case you reinstall.
 
 ## Notes
 
