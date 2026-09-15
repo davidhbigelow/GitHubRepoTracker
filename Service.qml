@@ -4,7 +4,7 @@ import Quickshell.Io
 import "Model.js" as Model
 
 // Headless service half of the download monitor. Watches the config file,
-// keeps one cached JSON file per repo under ~/.local/state/omarchy/gitdlmon/,
+// keeps one cached JSON file per repo under ~/.local/state/omarchy/ghrepotracker/,
 // refreshes stale repos from api.github.com, and mirrors everything into a
 // single store.json the widgets watch for live updates.
 //
@@ -51,7 +51,7 @@ Item {
   }
 
   function log(msg) {
-    console.log("[gitdlmon] " + msg)
+    console.log("[ghrepotracker] " + msg)
   }
 
   // ------------------------------------------------------------- config watch

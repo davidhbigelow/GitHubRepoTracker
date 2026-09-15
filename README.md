@@ -41,7 +41,7 @@ Repositories are managed from the panel (add button, or trash to remove), or
 by editing the settings file directly:
 
 ```text
-~/.config/omarchy/settings/gitdlmon.json
+~/.config/omarchy/settings/ghrepotracker.json
 ```
 
 ```json
@@ -66,8 +66,8 @@ omarchy plugin remove davidhbigelow.ghrepotracker --yes
 Removing the plugin keeps your settings and history. To delete them too:
 
 ```bash
-rm -rf ~/.local/state/omarchy/gitdlmon
-rm -f ~/.config/omarchy/settings/gitdlmon.json
+rm -rf ~/.local/state/omarchy/ghrepotracker
+rm -f ~/.config/omarchy/settings/ghrepotracker.json
 ```
 
 ## Notes

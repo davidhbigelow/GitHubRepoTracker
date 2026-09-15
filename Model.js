@@ -5,11 +5,11 @@
 
 function pathsFor(home) {
   return {
-    cacheDir: home + "/.local/state/omarchy/gitdlmon/",
-    configPath: home + "/.config/omarchy/settings/gitdlmon.json",
-    storePath: home + "/.local/state/omarchy/gitdlmon/store.json",
-    refreshRequestPath: home + "/.local/state/omarchy/gitdlmon/refresh-request.json",
-    refreshStatusPath: home + "/.local/state/omarchy/gitdlmon/refresh-status.json"
+    cacheDir: home + "/.local/state/omarchy/ghrepotracker/",
+    configPath: home + "/.config/omarchy/settings/ghrepotracker.json",
+    storePath: home + "/.local/state/omarchy/ghrepotracker/store.json",
+    refreshRequestPath: home + "/.local/state/omarchy/ghrepotracker/refresh-request.json",
+    refreshStatusPath: home + "/.local/state/omarchy/ghrepotracker/refresh-status.json"
   }
 }
 
@@ -140,7 +140,7 @@ function fetchCommand(url) {
   var cmd = ["curl", "-fsS", "--max-time", "20", "--max-filesize", "8388608",
     "-H", "Accept: application/vnd.github+json",
     "-H", "X-GitHub-Api-Version: 2022-11-28",
-    "-H", "User-Agent: gitdlmon-omarchy-plugin"]
+    "-H", "User-Agent: ghrepotracker-omarchy-plugin"]
   cmd.push(url)
   return cmd
 }

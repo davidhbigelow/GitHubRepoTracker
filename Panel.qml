@@ -377,7 +377,7 @@ Panel {
     var tl = Model.selectedTimeline(entries, root.metric, root.period)
     var out = Model.displayTimeline(tl, root.cumulative)
     var ms = Date.now() - t0
-    console.log("[gitdlmon] chart " + root.group + "/" + root.metric + "/" + root.period + (root.cumulative ? "/cum" : "/evt")
+    console.log("[ghrepotracker] chart " + root.group + "/" + root.metric + "/" + root.period + (root.cumulative ? "/cum" : "/evt")
       + " n=" + out.steps.length
       + " src=" + out.source
       + " pts=" + JSON.stringify(out.steps.slice(0, 14).map(function(t, i) { return new Date(t).toISOString().slice(0, 10) + ":" + out.totals[i] }))

@@ -16,7 +16,7 @@ import urllib.request
 
 API_ROOT = "https://api.github.com"
 API_VERSION = "2026-03-10"
-USER_AGENT = "gitdlmon-omarchy-plugin"
+USER_AGENT = "ghrepotracker-omarchy-plugin"
 REPO_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?/[A-Za-z0-9_.-]+$")
 
 
