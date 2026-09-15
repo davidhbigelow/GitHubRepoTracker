@@ -28,7 +28,7 @@ BarWidget {
     if (root.aggregate.trend === "down") return Color.urgent
     return root.bar ? root.bar.barForeground : Color.foreground
   }
-  readonly property string btnText: Model.miniSpark(root.aggregate.totals, 9) + " " + Model.formatNumber(root.aggregate.total)
+  readonly property string btnText: Model.formatNumber(root.aggregate.total)
   readonly property string btnTooltip: {
     var whom = root.pinnedRepo !== ""
       ? root.pinnedRepo + " downloads"
@@ -72,7 +72,7 @@ BarWidget {
     panelLoader.item.hostWidget = root
   }
 
-  implicitWidth: button.implicitWidth
+  implicitWidth: widgetRow.implicitWidth
   implicitHeight: button.implicitHeight
 
   onBarChanged: injectPanel()
@@ -92,6 +92,34 @@ BarWidget {
     onFileChanged: reload()
     onLoaded: root.store = Model.parseStore(text())
     onLoadFailed: root.store = null
+  }
+
+  // Live theme switches rewrite this file (and push `shell applyTheme` IPC).
+  // The panel's cross-file color bindings — kit Button fills, selected-state
+  // tints — resolve once at creation and never re-evaluate, so content created
+  // under the previous palette keeps stale colors after a switch. Rebuild the
+  // panel a beat later so everything re-resolves against the new theme.
+  FileView {
+    id: themeFile
+    path: root.home + "/.local/state/omarchy/current/theme/colors.toml"
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: {
+      if (panelLoader.active) rethemeTimer.restart()
+    }
+  }
+
+  Timer {
+    id: rethemeTimer
+    interval: 300
+    onTriggered: {
+      if (!panelLoader.active) return
+      var wasOpen = panelLoader.item ? panelLoader.item.opened === true : false
+      panelLoader.active = false
+      root.openPending = wasOpen
+      Qt.callLater(function() { panelLoader.active = true })
+    }
   }
 
   property bool openPending: false
@@ -124,18 +152,50 @@ BarWidget {
     }
   }
 
-  WidgetButton {
-    id: button
-    anchors.fill: parent
-    bar: root.bar
-    text: root.btnText
-    tooltipText: root.btnTooltip
-    foreground: root.trendColor
-    fontSize: Style.font.bodySmall
-    fixedWidth: -1
-    fixedHeight: root.bar && root.bar.vertical ? Style.space(26) : -1
-    onPressed: function(buttonCode) {
-      if (buttonCode === Qt.LeftButton) root.toggle()
+  Row {
+    id: widgetRow
+    anchors.centerIn: parent
+    spacing: Style.space(3)
+
+    // Trend chart glyph; the slot forwards clicks and the tooltip so the
+    // whole widget behaves like one button alongside the number.
+    Item {
+      id: iconSlot
+      width: trendIcon.width
+      height: trendIcon.height
+      anchors.verticalCenter: parent.verticalCenter
+
+      ControlIcon {
+        id: trendIcon
+        kind: "chart"
+        size: Style.space(14)
+        color: root.trendColor
+      }
+
+      MouseArea {
+        anchors.fill: parent
+        hoverEnabled: true
+        cursorShape: Qt.PointingHandCursor
+        onClicked: root.toggle()
+        onEntered: if (root.bar) root.bar.showTooltip(button, root.btnTooltip)
+        onExited: if (root.bar) root.bar.hideTooltip(button)
+      }
+    }
+
+    WidgetButton {
+      id: button
+      anchors.verticalCenter: parent.verticalCenter
+      horizontalMargin: 2
+      bar: root.bar
+      text: root.btnText
+      tooltipText: root.btnTooltip
+      foreground: root.trendColor
+      fontSize: Style.font.bodySmall
+      fixedWidth: -1
+      fixedHeight: root.bar && root.bar.vertical ? Style.space(26) : -1
+      onPressed: function(buttonCode) {
+        if (buttonCode === Qt.LeftButton) root.toggle()
+      }
     }
   }
 }

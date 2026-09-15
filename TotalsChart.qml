@@ -347,7 +347,7 @@ Item {
     anchors.leftMargin: Style.space(2)
     anchors.bottom: parent.bottom
     text: root.startLabel
-    color: Color.muted
+    color: Color.foreground
     font.pixelSize: Style.space(10)
     visible: root.startLabel !== ""
   }
@@ -357,7 +357,7 @@ Item {
     anchors.rightMargin: Style.space(2)
     anchors.bottom: parent.bottom
     text: root.endLabel
-    color: Color.muted
+    color: Color.foreground
 font.pixelSize: Style.space(10)
     visible: root.endLabel !== ""
   }

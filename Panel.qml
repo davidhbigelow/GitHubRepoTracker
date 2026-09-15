@@ -18,6 +18,12 @@ Panel {
   moduleName: "davidhbigelow.gitdlmon"
   manageIpc: false
 
+  // Text on the dialog card must pair with the CARD background
+  // (Color.popups.background), not the bar's adaptive barForeground: when the
+  // bar runs transparent over a light wallpaper, barForeground flips dark for
+  // bar readability and would render the dialog's text invisible on the card.
+  readonly property color panelForeground: Color.popups.text
+
   property var anchorItem: null
   property var hostWidget: null
   readonly property var barIdentity: hostWidget || root
@@ -751,7 +757,7 @@ Panel {
             Text {
               textFormat: Text.PlainText
               text: "GITHUB REPO TRACKER"
-              color: Qt.darker(root.barForeground, 1.4)
+              color: Qt.darker(root.panelForeground, 1.4)
               font.family: Style.font.family
               font.pixelSize: Style.font.caption
               font.bold: true
@@ -761,7 +767,7 @@ Panel {
             Text {
               textFormat: Text.PlainText
               text: root.trackedSummary
-              color: root.barForeground
+              color: root.panelForeground
               font.family: Style.font.family
               font.pixelSize: Style.font.body
             }
@@ -783,7 +789,7 @@ Panel {
                 height: Style.space(30)
                 tooltipText: modelData.tip
                 selected: root.metric === modelData.id
-                foreground: root.barForeground
+                foreground: root.panelForeground
                 accent: Color.accent
                 fontFamily: Style.font.family
                 onClicked: root.metric = modelData.id
@@ -812,7 +818,7 @@ Panel {
               id: allTotal
               textFormat: Text.PlainText
               text: Model.formatNumber(root.allTotal)
-              color: root.barForeground
+              color: root.panelForeground
               font.family: Style.font.family
               font.pixelSize: Style.font.heading
               font.bold: true
@@ -863,7 +869,7 @@ Panel {
                 text: root.refreshTotal > 0
                   ? "Refreshing Data (" + root.refreshDone + "/" + root.refreshTotal + ")"
                   : "Refreshing Data"
-                color: root.barForeground
+                color: root.panelForeground
                 font.family: Style.font.family
                 font.pixelSize: Style.font.body
                 font.bold: true
@@ -891,7 +897,7 @@ Panel {
                     width: Math.min(implicitWidth, Style.space(240))
                     textFormat: Text.PlainText
                     text: root.pinnedName
-                    color: root.barForeground
+                    color: root.panelForeground
                     font.family: Style.font.family
                     font.pixelSize: Style.font.body
                     font.bold: true
@@ -930,7 +936,7 @@ Panel {
                   required property string modelData
                   text: modelData.toUpperCase()
                   selected: root.period === modelData
-                  foreground: root.barForeground
+                  foreground: root.panelForeground
                   accent: Color.accent
                   fontFamily: Style.font.family
                   onClicked: {
@@ -944,7 +950,7 @@ Panel {
                 height: Style.space(30)
                 tooltipText: root.cumulative ? "Show events" : "Show cumulative values"
                 selected: root.cumulative
-                foreground: root.barForeground
+                foreground: root.panelForeground
                 accent: Color.accent
                 fontFamily: Style.font.family
                   onClicked: root.cumulative = !root.cumulative
@@ -975,7 +981,7 @@ Panel {
             Button {
               text: root.tabText("all")
               selected: root.group === "all"
-              foreground: root.barForeground
+              foreground: root.panelForeground
               accent: Color.accent
               fontFamily: Style.font.family
               onClicked: root.group = "all"
@@ -983,7 +989,7 @@ Panel {
             Button {
               text: root.tabText("mine")
               selected: root.group === "mine"
-              foreground: root.barForeground
+              foreground: root.panelForeground
               accent: Color.accent
               fontFamily: Style.font.family
               onClicked: root.group = "mine"
@@ -991,7 +997,7 @@ Panel {
             Button {
               text: root.tabText("others")
               selected: root.group === "others"
-              foreground: root.barForeground
+              foreground: root.panelForeground
               accent: Color.accent
               fontFamily: Style.font.family
               onClicked: root.group = "others"
@@ -1014,7 +1020,7 @@ Panel {
               id: urlField
               width: parent.width
               placeholderText: "https://github.com/owner/repo"
-              foreground: root.barForeground
+              foreground: root.panelForeground
               text: root.addUrl
               onTextChanged: {
                 root.addUrl = text
@@ -1036,7 +1042,7 @@ Panel {
                 id: ownerField
                 width: (parent.width - parent.spacing) / 2
                 placeholderText: "owner"
-                foreground: root.barForeground
+                foreground: root.panelForeground
                 text: root.addOwner
                 onTextChanged: root.addOwner = text
                 Keys.onReturnPressed: root.requestAdd()
@@ -1047,7 +1053,7 @@ Panel {
                 id: repoField
                 width: (parent.width - parent.spacing) / 2
                 placeholderText: "repo"
-                foreground: root.barForeground
+                foreground: root.panelForeground
                 text: root.addRepo
                 onTextChanged: root.addRepo = text
                 Keys.onReturnPressed: root.requestAdd()
@@ -1062,7 +1068,7 @@ Panel {
                 anchors.verticalCenter: parent.verticalCenter
                 textFormat: Text.PlainText
                 text: "Repo Classification:"
-                color: root.barForeground
+                color: root.panelForeground
                 font.family: Style.font.family
                 font.pixelSize: Style.font.body
               }
@@ -1070,7 +1076,7 @@ Panel {
               Button {
                 text: "Mine"
                 selected: root.addCategory === "mine"
-                foreground: root.barForeground
+                foreground: root.panelForeground
                 accent: Color.accent
                 fontFamily: Style.font.family
                 onClicked: root.addCategory = "mine"
@@ -1078,7 +1084,7 @@ Panel {
               Button {
                 text: "Others"
                 selected: root.addCategory === "others"
-                foreground: root.barForeground
+                foreground: root.panelForeground
                 accent: Color.accent
                 fontFamily: Style.font.family
                 onClicked: root.addCategory = "others"
@@ -1116,7 +1122,7 @@ Panel {
                 : (root.compareSource() === "star-cohort"
                     ? "COMPARE · NORMALIZED STAR ACQUISITIONS BY STARRED DATE"
                     : "COMPARE · NORMALIZED " + root.metricLabel(root.metric).toUpperCase() + " CHANGE")
-              color: Qt.darker(root.barForeground, 1.4)
+              color: Qt.darker(root.panelForeground, 1.4)
               font.family: Style.font.family
               font.pixelSize: Style.font.caption
               font.bold: true
@@ -1149,7 +1155,7 @@ Panel {
                   anchors.verticalCenter: parent.verticalCenter
                   textFormat: Text.PlainText
                   text: modelData.name
-                  color: root.barForeground
+                  color: root.panelForeground
                   font.family: Style.font.family
                   font.pixelSize: Style.font.body
                   elide: Text.ElideRight
@@ -1169,7 +1175,7 @@ Panel {
                   horizontalAlignment: Text.AlignRight
                   textFormat: Text.PlainText
                   text: Model.formatNumber(modelData.total)
-                  color: root.barForeground
+                  color: root.panelForeground
                   font.family: Style.font.family
                   font.pixelSize: Style.font.subtitle
                   font.bold: true
@@ -1180,7 +1186,7 @@ Panel {
             Button {
               text: "Back to list"
               anchors.horizontalCenter: parent.horizontalCenter
-              foreground: root.barForeground
+              foreground: root.panelForeground
               accent: Color.accent
               fontFamily: Style.font.family
               onClicked: root.exitCompare()
@@ -1202,7 +1208,7 @@ Panel {
             Text {
               textFormat: Text.PlainText
               text: "REMOVE REPOSITORIES"
-              color: Qt.darker(root.barForeground, 1.4)
+              color: Qt.darker(root.panelForeground, 1.4)
               font.family: Style.font.family
               font.pixelSize: Style.font.caption
               font.bold: true
@@ -1216,7 +1222,7 @@ Panel {
               text: "Remove " + root.removeSel.length +
                 (root.removeSel.length === 1 ? " repo" : " repos") +
                 " from tracking? Their cached history will be deleted."
-              color: root.barForeground
+              color: root.panelForeground
               font.family: Style.font.family
               font.pixelSize: Style.font.bodySmall
             }
@@ -1242,7 +1248,7 @@ Panel {
                   elide: Text.ElideRight
                   textFormat: Text.PlainText
                   text: root.removeEntry(modelData).name
-                  color: root.barForeground
+                  color: root.panelForeground
                   font.family: Style.font.family
                   font.pixelSize: Style.font.body
                 }
@@ -1252,7 +1258,7 @@ Panel {
                   horizontalAlignment: Text.AlignRight
                   textFormat: Text.PlainText
                   text: Model.formatNumber(root.removeEntry(modelData).total)
-                  color: root.barForeground
+                  color: root.panelForeground
                   font.family: Style.font.family
                   font.pixelSize: Style.font.subtitle
                   font.bold: true
@@ -1266,14 +1272,14 @@ Panel {
 
               Button {
                 text: "Remove"
-                foreground: root.barForeground
+                foreground: root.panelForeground
                 accent: Color.urgent
                 fontFamily: Style.font.family
                 onClicked: root.doRemove()
               }
               Button {
                 text: "Back"
-                foreground: root.barForeground
+                foreground: root.panelForeground
                 accent: Color.accent
                 fontFamily: Style.font.family
                 onClicked: root.cancelConfirm()
@@ -1308,7 +1314,7 @@ Panel {
                   subText: root.categorySubtext(modelData)
                   totalText: Model.formatNumber(root.categoryTotal(modelData))
                   trend: root.categoryTrend(modelData)
-                  foreground: root.barForeground
+                  foreground: root.panelForeground
                   accent: root.colorSuccess
                   urgent: root.colorWarning
                   muted: Color.muted
@@ -1342,7 +1348,7 @@ Panel {
                         checked: root.isChecked(modelData.repo)
                         pinned: root.mode === "list" && root.isPinned(modelData.repo)
                         refreshing: root.refreshPending.indexOf(modelData.repo) >= 0
-                        foreground: root.barForeground
+                        foreground: root.panelForeground
                         accent: root.colorSuccess
                         urgent: root.colorWarning
                         muted: Color.muted
@@ -1355,7 +1361,7 @@ Panel {
                 Rectangle {
                   width: parent.width
                   height: Style.spacing.hairline
-                  color: root.barForeground
+                  color: root.panelForeground
                   opacity: 0.12
                 }
               }
@@ -1381,7 +1387,7 @@ Panel {
               text: "Remove (" + root.removeSel.length + ")"
               enabled: root.removeSel.length > 0
               selected: true
-              foreground: root.barForeground
+              foreground: root.panelForeground
               accent: Color.urgent
               fontFamily: Style.font.family
               onClicked: root.confirmRemoval()
@@ -1390,7 +1396,7 @@ Panel {
             Button {
               visible: root.mode === "rem"
               text: "Cancel"
-              foreground: root.barForeground
+              foreground: root.panelForeground
               accent: Color.accent
               fontFamily: Style.font.family
               onClicked: root.cancelRemove()
@@ -1401,7 +1407,7 @@ Panel {
               text: "Compare (" + root.selection.length + ")"
               enabled: root.selection.length >= 2
               selected: root.mode === "sel"
-              foreground: root.barForeground
+              foreground: root.panelForeground
               accent: Color.accent
               fontFamily: Style.font.family
               onClicked: root.beginCompare()
@@ -1410,7 +1416,7 @@ Panel {
             Button {
               visible: root.mode === "sel"
               text: "Cancel"
-              foreground: root.barForeground
+              foreground: root.panelForeground
               accent: Color.accent
               fontFamily: Style.font.family
               onClicked: root.cancelSelect()
@@ -1421,7 +1427,7 @@ Panel {
               width: Style.space(30)
               height: Style.space(30)
               tooltipText: "Compare repositories"
-              foreground: root.barForeground
+              foreground: root.panelForeground
               accent: Color.accent
               fontFamily: Style.font.family
               onClicked: root.enterSelect()
@@ -1439,7 +1445,7 @@ Panel {
               width: Style.space(30)
               height: Style.space(30)
               tooltipText: "Remove repositories"
-              foreground: root.barForeground
+              foreground: root.panelForeground
               accent: Color.accent
               fontFamily: Style.font.family
               onClicked: root.beginRemove()
@@ -1457,7 +1463,7 @@ Panel {
               width: Style.space(30)
               height: Style.space(30)
               tooltipText: "Add repository"
-              foreground: root.barForeground
+              foreground: root.panelForeground
               accent: Color.accent
               fontFamily: Style.font.family
               onClicked: root.beginAdd()
@@ -1478,7 +1484,7 @@ Panel {
             width: Style.space(30)
             height: Style.space(30)
             tooltipText: "Buy me a coffee"
-            foreground: root.barForeground
+            foreground: root.panelForeground
             accent: Color.accent
             fontFamily: Style.font.family
             onClicked: Qt.openUrlExternally("https://www.buymeacoffee.com/davidhbigelow")
@@ -1503,7 +1509,7 @@ Panel {
               anchors.verticalCenter: parent.verticalCenter
               textFormat: Text.PlainText
               text: root.updatedText
-              color: Qt.darker(root.barForeground, 1.5)
+              color: Qt.darker(root.panelForeground, 1.5)
               font.family: Style.font.family
               font.pixelSize: Style.font.caption
             }
@@ -1511,7 +1517,7 @@ Panel {
             Button {
               visible: root.mode === "add"
               text: "Cancel"
-              foreground: root.barForeground
+              foreground: root.panelForeground
               accent: Color.accent
               fontFamily: Style.font.family
               onClicked: root.cancelAdd()
@@ -1521,7 +1527,7 @@ Panel {
               visible: root.mode === "add"
               text: "OK"
               selected: true
-              foreground: root.barForeground
+              foreground: root.panelForeground
               accent: Color.accent
               fontFamily: Style.font.family
               onClicked: root.requestAdd()
@@ -1532,7 +1538,7 @@ Panel {
               width: Style.space(30)
               height: Style.space(30)
               tooltipText: "Refresh now"
-              foreground: root.barForeground
+              foreground: root.panelForeground
               accent: Color.accent
               fontFamily: Style.font.family
               onClicked: root.requestRefresh()

@@ -57,7 +57,7 @@ Item {
         visible: root.subText !== ""
         textFormat: Text.PlainText
         text: root.subText
-        color: root.muted
+        color: root.foreground
         font.family: Style.font.family
         font.pixelSize: Style.font.bodySmall
       }

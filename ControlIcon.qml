@@ -20,6 +20,9 @@ Item {
   // rising above the box) into the shared 640x640 space: x unchanged,
   // absolute y shifted +72 so the content sits centered.
   readonly property string mugPath: "M152 56c-13.3 0-24 10.7-24 24 0 38.9 23.4 59.4 39.1 73.1l1.1 1c16.3 14.3 23.8 21.8 23.8 37.9 0 13.3 10.7 24 24 24s24-10.7 24-24c0-38.9-23.4-59.4-39.1-73.1l-1.1-1C183.5 103.7 176 96.1 176 80 176 66.7 165.3 56 152 56zM96 264c-17.7 0-32 14.3-32 32l0 192c0 53 43 96 96 96l192 0c41.8 0 77.4-26.7 90.5-64l5.5 0c70.7 0 128-57.3 128-128S518.7 264 448 264L96 264zM448 456l0-128c35.3 0 64 28.7 64 64s-28.7 64-64 64zM288 80c0-13.3-10.7-24-24-24S240 66.7 240 80c0 38.9 23.4 59.4 39.1 73.1l1.1 1c16.3 14.3 23.8 21.8 23.8 37.9 0 13.3 10.7 24 24 24s24-10.7 24-24c0-38.9-23.4-59.4-39.1-73.1l-1.1-1C295.5 103.7 288 96.1 288 80z"
+  // Font Awesome "chart-line", normalized from its 512x512 grid into the
+  // shared 640x640 space: x+64 / y+64 translation so the content sits centered.
+  readonly property string chartPath: "M128 128c0-17.7-14.3-32-32-32S64 110.3 64 128L64 464c0 44.2 35.8 80 80 80l400 0c17.7 0 32-14.3 32-32s-14.3-32-32-32L144 480c-8.8 0-16-7.2-16-16L128 128zm406.6 86.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0L384 274.7 326.6 217.4c-12.5-12.5-32.8-12.5-45.3 0l-96 96c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0l73.4-73.4 57.4 57.4c12.5 12.5 32.8 12.5 45.3 0l128-128z"
   readonly property string pathData: {
     if (root.kind === "delete") return root.deletePath
     if (root.kind === "add") return root.addPath
@@ -27,6 +30,7 @@ Item {
     if (root.kind === "events") return root.eventsPath
     if (root.kind === "compare") return root.comparePath
     if (root.kind === "mug") return root.mugPath
+    if (root.kind === "chart") return root.chartPath
     return root.refreshPath
   }
 
