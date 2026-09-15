@@ -2,6 +2,11 @@
 
 <img width="385" height="450" alt="preview" src="https://github.com/user-attachments/assets/25c061f7-18b0-4032-bbf6-6676c2d26968" />
 
+
+## DONATE / SUPPORT
+<a href="https://www.buymeacoffee.com/davidhbigelow" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" style="height: 60px !important;width: 217px !important;" ></a>
+
+
 An [Omarchy](https://omarchy.org) bar widget that tracks GitHub repositories:
 release-asset downloads, stars, and release counts, with trend charts and a
 normalized compare view.
