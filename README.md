@@ -29,6 +29,12 @@ normalized compare view.
 omarchy plugin add https://github.com/davidhbigelow/GitHubRepoTracker.git --enable
 ```
 
+## Update
+
+```bash
+omarchy plugin update davidhbigelow.ghrepotracker
+```
+
 ## Remove
 
 ```bash
