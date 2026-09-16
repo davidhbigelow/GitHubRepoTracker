@@ -18,6 +18,15 @@ API_ROOT = "https://api.github.com"
 API_VERSION = "2026-03-10"
 USER_AGENT = "ghrepotracker-omarchy-plugin"
 REPO_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?/[A-Za-z0-9_.-]+$")
+PAGE_SIZE = 30
+MAX_IN_FLIGHT = 4
+MAX_PAGES = 1000
+MAX_TOTAL_EVENTS = 30000
+MAX_TOTAL_BYTES = 64 * 1024 * 1024
+BUDGET_MESSAGE = (
+    f"refusing more than {MAX_PAGES} pages, {MAX_TOTAL_EVENTS} star events, "
+    f"or {MAX_TOTAL_BYTES} bytes of star-history data per fetch"
+)
 
 
 class FetchError(Exception):
@@ -42,82 +51,100 @@ def parse_last_page(link_header: str | None) -> int:
     return 1
 
 
+class CohortAggregator:
+    """Incrementally fold validated star-history weeks into aggregate cohorts."""
+
+    def __init__(self, now: dt.datetime) -> None:
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=dt.timezone.utc)
+        self._now = now.astimezone(dt.timezone.utc)
+        today = self._now.date()
+        self._today = today
+        self._week_start = today - dt.timedelta(days=today.weekday())
+        self._month_index = self._now.year * 12 + self._now.month - 1
+        self._weeks: dict[int, tuple[int, tuple[int, ...]]] = {}
+
+    def feed(self, records: list[object]) -> None:
+        """Validate and accumulate a page of star-history records."""
+        for record in records:
+            if not isinstance(record, dict):
+                raise FetchError("GitHub returned an invalid star history record")
+            epoch = record.get("week")
+            total = record.get("total")
+            days = record.get("days")
+            if (not isinstance(epoch, int) or isinstance(epoch, bool) or epoch < 0 or
+                    not isinstance(total, int) or isinstance(total, bool) or total < 0 or
+                    not isinstance(days, list) or len(days) != 7 or
+                    any(not isinstance(value, int) or isinstance(value, bool) or value < 0 for value in days)):
+                raise FetchError("GitHub returned an invalid star history record")
+            if sum(days) != total:
+                raise FetchError("GitHub star history total does not match its daily counts")
+            try:
+                sunday = dt.datetime.fromtimestamp(epoch, dt.timezone.utc)
+            except (OverflowError, OSError, ValueError) as error:
+                raise FetchError("GitHub returned an invalid star history week") from error
+            if sunday.weekday() != 6 or any((sunday.hour, sunday.minute, sunday.second, sunday.microsecond)):
+                raise FetchError("GitHub star history week is not Sunday 00:00 UTC")
+            if sunday.date() > self._today:
+                raise FetchError("GitHub returned a future star history week")
+            values = tuple(days)
+            item = (total, values)
+            if epoch in self._weeks and self._weeks[epoch] != item:
+                raise FetchError("GitHub returned conflicting duplicate star history weeks")
+            self._weeks[epoch] = item
+
+    def result(self) -> dict[str, object]:
+        """Render the accumulated weeks as aggregate cohorts."""
+        today = self._today
+        week_start = self._week_start
+        month_index = self._month_index
+        maps: dict[str, dict[str, int]] = {
+            "days": {}, "weeks": {}, "months": {}, "years": {}
+        }
+        count = 0
+
+        for epoch in sorted(self._weeks):
+            sunday = dt.datetime.fromtimestamp(epoch, dt.timezone.utc).date()
+            total, values = self._weeks[epoch]
+            future_count = 0
+            for offset, value in enumerate(values):
+                day = sunday + dt.timedelta(days=offset)
+                if day > today:
+                    future_count += value
+                    continue
+                if value <= 0:
+                    continue
+                if today - dt.timedelta(days=29) <= day:
+                    key = day.isoformat()
+                    maps["days"][key] = maps["days"].get(key, 0) + value
+                event_week = day - dt.timedelta(days=day.weekday())
+                if week_start - dt.timedelta(weeks=7) <= event_week <= week_start:
+                    key = event_week.isoformat()
+                    maps["weeks"][key] = maps["weeks"].get(key, 0) + value
+                event_month = day.year * 12 + day.month - 1
+                if month_index - 11 <= event_month <= month_index:
+                    key = f"{day.year:04d}-{day.month:02d}"
+                    maps["months"][key] = maps["months"].get(key, 0) + value
+                key = f"{day.year:04d}"
+                maps["years"][key] = maps["years"].get(key, 0) + value
+            count += total - future_count
+
+        cohorts = {
+            name: [{"bucket": key, "stars": buckets[key]} for key in sorted(buckets)]
+            for name, buckets in maps.items()
+        }
+        return {
+            "collectedAt": self._now.isoformat(timespec="seconds").replace("+00:00", "Z"),
+            "acquisitionCount": count,
+            "starCohorts": cohorts,
+        }
+
+
 def aggregate_history(records: list[object], now: dt.datetime) -> dict[str, object]:
-    """Validate and aggregate Sunday-based GitHub star-history records."""
-    if now.tzinfo is None:
-        now = now.replace(tzinfo=dt.timezone.utc)
-    now = now.astimezone(dt.timezone.utc)
-    today = now.date()
-    week_start = today - dt.timedelta(days=today.weekday())
-    month_index = now.year * 12 + now.month - 1
-    maps: dict[str, dict[str, int]] = {
-        "days": {}, "weeks": {}, "months": {}, "years": {}
-    }
-    count = 0
-
-    weeks: dict[int, tuple[int, tuple[int, ...]]] = {}
-    for record in records:
-        if not isinstance(record, dict):
-            raise FetchError("GitHub returned an invalid star history record")
-        epoch = record.get("week")
-        total = record.get("total")
-        days = record.get("days")
-        if (not isinstance(epoch, int) or isinstance(epoch, bool) or epoch < 0 or
-                not isinstance(total, int) or isinstance(total, bool) or total < 0 or
-                not isinstance(days, list) or len(days) != 7 or
-                any(not isinstance(value, int) or isinstance(value, bool) or value < 0 for value in days)):
-            raise FetchError("GitHub returned an invalid star history record")
-        if sum(days) != total:
-            raise FetchError("GitHub star history total does not match its daily counts")
-        try:
-            sunday = dt.datetime.fromtimestamp(epoch, dt.timezone.utc)
-        except (OverflowError, OSError, ValueError) as error:
-            raise FetchError("GitHub returned an invalid star history week") from error
-        if sunday.weekday() != 6 or any((sunday.hour, sunday.minute, sunday.second, sunday.microsecond)):
-            raise FetchError("GitHub star history week is not Sunday 00:00 UTC")
-        if sunday.date() > today:
-            raise FetchError("GitHub returned a future star history week")
-        values = tuple(days)
-        item = (total, values)
-        if epoch in weeks and weeks[epoch] != item:
-            raise FetchError("GitHub returned conflicting duplicate star history weeks")
-        weeks[epoch] = item
-
-    for epoch in sorted(weeks):
-        sunday = dt.datetime.fromtimestamp(epoch, dt.timezone.utc).date()
-        total, values = weeks[epoch]
-        future_count = 0
-        for offset, value in enumerate(values):
-            day = sunday + dt.timedelta(days=offset)
-            if day > today:
-                future_count += value
-                continue
-            if value <= 0:
-                continue
-            if today - dt.timedelta(days=29) <= day:
-                key = day.isoformat()
-                maps["days"][key] = maps["days"].get(key, 0) + value
-            event_week = day - dt.timedelta(days=day.weekday())
-            if week_start - dt.timedelta(weeks=7) <= event_week <= week_start:
-                key = event_week.isoformat()
-                maps["weeks"][key] = maps["weeks"].get(key, 0) + value
-            event_month = day.year * 12 + day.month - 1
-            if month_index - 11 <= event_month <= month_index:
-                key = f"{day.year:04d}-{day.month:02d}"
-                maps["months"][key] = maps["months"].get(key, 0) + value
-            key = f"{day.year:04d}"
-            maps["years"][key] = maps["years"].get(key, 0) + value
-        count += total - future_count
-
-    cohorts = {
-        name: [{"bucket": key, "stars": buckets[key]} for key in sorted(buckets)]
-        for name, buckets in maps.items()
-    }
-    return {
-        "collectedAt": now.isoformat(timespec="seconds").replace("+00:00", "Z"),
-        "acquisitionCount": count,
-        "starCohorts": cohorts,
-    }
+    """Validate and aggregate a full list of GitHub star-history records."""
+    aggregator = CohortAggregator(now)
+    aggregator.feed(records)
+    return aggregator.result()
 
 
 def get_token() -> str:
@@ -133,11 +160,12 @@ def get_token() -> str:
     return token
 
 
-def fetch_page(repo: str, page: int, token: str) -> tuple[list[object], str]:
+def fetch_page(repo: str, page: int, token: str) -> tuple[list[object], str, int]:
     owner, name = repo.split("/", 1)
     url = (
         f"{API_ROOT}/repos/{urllib.parse.quote(owner, safe='')}/"
-        f"{urllib.parse.quote(name, safe='')}/stargazers/history?per_page=30&page={page}"
+        f"{urllib.parse.quote(name, safe='')}/stargazers/history?"
+        f"per_page={PAGE_SIZE}&page={page}"
     )
     request = urllib.request.Request(url, headers={
         "Accept": "application/vnd.github+json",
@@ -161,22 +189,51 @@ def fetch_page(repo: str, page: int, token: str) -> tuple[list[object], str]:
         raise FetchError("GitHub API returned invalid JSON") from error
     if not isinstance(payload, list):
         raise FetchError("GitHub API returned an unexpected response")
-    return payload, link
+    return payload, link, len(raw)
 
 
-def fetch_all(repo: str, token: str) -> list[object]:
-    first, link = fetch_page(repo, 1, token)
+def fetch_cohorts(repo: str, token: str, now: dt.datetime) -> dict[str, object]:
+    """Stream star-history pages into cohorts without retaining the full history."""
+    aggregator = CohortAggregator(now)
+    first, link, first_size = fetch_page(repo, 1, token)
+    aggregator.feed(first)
+    total_events = len(first)
+    total_bytes = first_size
+    if total_events > MAX_TOTAL_EVENTS or total_bytes > MAX_TOTAL_BYTES:
+        raise FetchError(BUDGET_MESSAGE)
     last_page = parse_last_page(link)
+    if last_page > MAX_PAGES:
+        raise FetchError(BUDGET_MESSAGE)
     if last_page <= 1:
-        return first
-    pages: dict[int, list[object]] = {1: first}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-        futures = {executor.submit(fetch_page, repo, page, token): page for page in range(2, last_page + 1)}
-        for future in concurrent.futures.as_completed(futures):
-            page = futures[future]
-            payload, _ = future.result()
-            pages[page] = payload
-    return [event for page in range(1, last_page + 1) for event in pages[page]]
+        return aggregator.result()
+
+    pending = last_page - 1
+    next_page = 2
+    with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_IN_FLIGHT) as executor:
+        in_flight: set[concurrent.futures.Future[object]] = set()
+        try:
+            while pending or in_flight:
+                while pending and len(in_flight) < MAX_IN_FLIGHT:
+                    in_flight.add(executor.submit(fetch_page, repo, next_page, token))
+                    next_page += 1
+                    pending -= 1
+                if not in_flight:
+                    break
+                done, _ = concurrent.futures.wait(
+                    in_flight, return_when=concurrent.futures.FIRST_COMPLETED
+                )
+                in_flight.difference_update(done)
+                for future in done:
+                    payload, _, size = future.result()
+                    aggregator.feed(payload)
+                    total_events += len(payload)
+                    total_bytes += size
+                    if total_events > MAX_TOTAL_EVENTS or total_bytes > MAX_TOTAL_BYTES:
+                        raise FetchError(BUDGET_MESSAGE)
+        finally:
+            for future in in_flight:
+                future.cancel()
+    return aggregator.result()
 
 
 def main(argv: list[str]) -> int:
@@ -184,7 +241,7 @@ def main(argv: list[str]) -> int:
         print("usage: fetch_star_cohorts.py owner/repo", file=sys.stderr)
         return 2
     try:
-        result = aggregate_history(fetch_all(argv[1], get_token()), dt.datetime.now(dt.timezone.utc))
+        result = fetch_cohorts(argv[1], get_token(), dt.datetime.now(dt.timezone.utc))
     except FetchError as error:
         print(f"fetch_star_cohorts.py: {error}", file=sys.stderr)
         return 1

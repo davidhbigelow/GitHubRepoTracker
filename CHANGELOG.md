@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.1 - 2026-09-16
+
+- Bar widget details panel no longer auto-opens on shell restart; it stays
+  closed until the toolbar icon is clicked.
+- Star-history fetch hardens its memory and request footprint: strict total
+  page/event/byte budgets before scheduling, a bounded number of parallel
+  requests in flight, and incremental aggregation that never retains the full
+  history.
+
 ## 0.2.0 - 2026-09-15
 
 - Chart tooltips now respect the selected period: weekly, monthly, and annual

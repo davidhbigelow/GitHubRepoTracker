@@ -77,13 +77,6 @@ BarWidget {
 
   onBarChanged: injectPanel()
 
-  Timer {
-    interval: 800
-    repeat: false
-    running: true
-    onTriggered: root.open()
-  }
-
   FileView {
     id: storeFile
     path: root.storePath
