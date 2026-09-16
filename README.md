@@ -1,11 +1,15 @@
 # GitHub Repo Tracker
 
-<img width="385" height="450" alt="preview" src="https://github.com/user-attachments/assets/25c061f7-18b0-4032-bbf6-6676c2d26968" />
+[![Built for Omarchy: Plugin](https://raw.githubusercontent.com/tcballard/omarchy-badges/75975e5b5bf75e7ede3764bcd2950046f7abfe2c/badges/v1/omarchy-plugin.svg)](https://github.com/tcballard/omarchy-badges)
 
+<p align="center">
+<img width="385" height="450" alt="preview" src="https://github.com/user-attachments/assets/25c061f7-18b0-4032-bbf6-6676c2d26968" />
+</p>
 
 ## DONATE / SUPPORT
+<p align="center">
 <a href="https://www.buymeacoffee.com/davidhbigelow" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" style="height: 60px !important;width: 217px !important;" ></a>
-
+</p>
 
 An [Omarchy](https://omarchy.org) bar widget that tracks GitHub repositories:
 release-asset downloads, stars, and release counts, with trend charts and a
