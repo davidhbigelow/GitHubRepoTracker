@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "ghrepo.tracker",
   "name": "GitHub Repo Tracker",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "author": "David (Deuce) Bigelow",
   "license": "MIT",
   "description": "Tracks GitHub release download totals for your own and third-party repos, with weekly sparklines, trend-colored lines and a normalized compare view. Repos are split into 'mine' and 'others' categories, cached per-repo to JSON and refreshed weekly from the GitHub API.",

@@ -121,6 +121,21 @@ Item {
     elide: Text.ElideRight
   }
 
+  // Hovering the total reveals the exact (ungrouped) number behind the compact
+  // "#.##k"/"#.##M" display, e.g. 16.3k -> 16,308. The chip appears just to
+  // the left of the number, inline with it ([16,308] 16.3k).
+  ValueTip {
+    anchors.left: totalText.left
+    anchors.right: totalText.right
+    anchors.top: totalText.top
+    anchors.bottom: totalText.bottom
+    before: true
+    inline: true
+    value: root.entry ? root.entry.total : NaN
+    active: root.hasData && hoverArea.containsMouse
+    accentColor: root.trendColor
+  }
+
   MouseArea {
     id: hoverArea
     anchors.fill: parent

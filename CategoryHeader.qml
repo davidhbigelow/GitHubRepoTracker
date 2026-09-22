@@ -12,6 +12,7 @@ Item {
   property int count: 0
   property string subText: ""
   property string totalText: ""
+  property real total: NaN
   property string trend: "flat"
   property color foreground: Color.foreground
   property color accent: Color.accent
@@ -80,15 +81,39 @@ Item {
       font.pixelSize: Style.font.body
     }
 
-    Text {
-      id: totalText
-      textFormat: Text.PlainText
-      text: root.totalText
-      color: root.foreground
-      font.family: Style.font.family
-      font.pixelSize: Style.font.heading
-      font.bold: true
-      horizontalAlignment: Text.AlignRight
+    Item {
+      id: totalWrap
+      anchors.verticalCenter: parent.verticalCenter
+      width: totalText.implicitWidth
+      height: totalText.implicitHeight
+
+      Text {
+        id: totalText
+        textFormat: Text.PlainText
+        text: root.totalText
+        color: root.foreground
+        font.family: Style.font.family
+        font.pixelSize: Style.font.heading
+        font.bold: true
+        horizontalAlignment: Text.AlignRight
+      }
+
+      MouseArea {
+        id: totalHover
+        anchors.fill: parent
+        hoverEnabled: true
+      }
+
+      // Hovering the total reveals the exact count behind the compact number,
+      // shown just to the left of it ([16,308] 16.3k), inline with the row.
+      ValueTip {
+        anchors.fill: parent
+        before: true
+        inline: true
+        value: root.total
+        active: totalHover.containsMouse
+        accentColor: root.trendColor
+      }
     }
   }
 }

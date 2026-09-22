@@ -951,13 +951,63 @@ function timelineInDomain(timeline, period, at) {
   return out
 }
 
+// Bounded (cohort/star-cohort) timelines reconstruct historic periods from
+// release or star buckets, which have no knowledge of activity in the current,
+// still-open period. Real observed increases inside that bucket (taken from
+// the fine daily series) are blended into the trailing slot so an in-progress
+// month/week/day never renders as zero when downloads actually happened.
+// Returns a non-negative volume, or 0 when there is nothing to add.
+function currentBucketObservedVolume(entries, metric, period, at) {
+  var field = metricField(metric)
+  if (field !== "downloads" && field !== "stars") return 0
+  var domain = periodDomain(period, [], at)
+  var end = domain.end
+  var start
+  if (period === "daily") start = end
+  else if (period === "weekly") start = Date.parse(weekStartISO(new Date(end)))
+  else if (period === "monthly") start = Date.UTC(new Date(end).getUTCFullYear(), new Date(end).getUTCMonth(), 1)
+  else start = Date.UTC(new Date(end).getUTCFullYear(), 0, 1)
+  if (!isFinite(start) || start > end) return 0
+  var volume = 0
+  for (var i = 0; i < (entries || []).length; i++) {
+    var days = entries[i].history && entries[i].history.days || []
+    var firstTs = null, lastTs = null, firstVal = 0, lastVal = 0
+    for (var j = 0; j < days.length; j++) {
+      var ts = startOfDay(Date.parse(days[j].bucket))
+      var v = Number(days[j][field])
+      if (!isFinite(ts) || ts < start || ts > end || !isFinite(v)) continue
+      if (firstTs === null) { firstTs = ts; lastTs = ts; firstVal = v; lastVal = v }
+      else if (ts < firstTs) { firstTs = ts; firstVal = v }
+      else if (ts > lastTs) { lastTs = ts; lastVal = v }
+    }
+    if (firstTs !== null) volume += Math.max(0, lastVal - firstVal)
+  }
+  return isFinite(volume) ? volume : 0
+}
+
 function selectedTimeline(entries, metric, period, at) {
   var observed = timelineInDomain(historyTimeline(entries, metric, period), period, at)
   observed.source = "observed"
   if (observed.steps.length >= 2) return observed
-  if (metric === "stars" && haveStarCohorts(entries)) return starCohortTimeline(entries, period, at)
-  if (metric === "stars") return observed
-  return cohortTimeline(entries, metric, period, at)
+  var fallback
+  if (metric === "stars" && haveStarCohorts(entries)) fallback = starCohortTimeline(entries, period, at)
+  else if (metric === "stars") return observed
+  else fallback = cohortTimeline(entries, metric, period, at)
+  // Blend this repo's real observed current-period activity into the trailing
+  // slot. For the in-progress day/week/month a measurable observed count is
+  // more truthful than the release/star reconstruction (release asset counts
+  // are lifetime totals, so a release this month would otherwise masquerade
+  // as this month's downloads), and an active month must never render as
+  // zero. Not applied to the in-progress year: the lifetime total of this
+  // year's releases is a better "so far" estimate than the few days the daily
+  // series has measured.
+  if (fallback && fallback.boundedBuckets === true && fallback.totals && fallback.totals.length) {
+    if (period !== "annual") {
+      var vol = currentBucketObservedVolume(entries, metric, period, at)
+      if (vol > 0) fallback.totals[fallback.totals.length - 1] = vol
+    }
+  }
+  return fallback
 }
 
 function bucketStartEpoch(bucket) {
@@ -983,27 +1033,19 @@ function displayTimeline(timeline, cumulative) {
   if (out.source === "cohort" || out.source === "star-cohort") {
     if (values.length) {
       if (out.cumulative) {
-        // A bucket's cumulative total is the value as of the END of that
-        // bucket (start of the next one, or "now" for the last). Anchor each
-        // point there, and open with the carry-forward total at the period
-        // start so the running line starts at the previous period's level.
-        var nSteps = [bucketStartEpoch(out.buckets[0])]
-        var nTotals = [0]
+        // Running total kept on the source timeline's own bucket positions
+        // (bucket starts, "now" for the trailing slot), so the cumulative
+        // line steps exactly where the events line spikes: cumulative[i] -
+        // cumulative[i-1] equals the volume plotted in bucket i. Anchoring
+        // each step a bucket later instead mislabels the increase as the
+        // following period's event (a flat period showing an increase).
         var running = 0
         for (var i = 0; i < values.length; i++) {
           running += Number(values[i]) || 0
-          var at = i < values.length - 1 ? bucketStartEpoch(out.buckets[i + 1]) : out.steps[out.steps.length - 1]
-          nSteps.push(at)
-          nTotals.push(running)
+          out.totals.push(running)
         }
-        out.steps = nSteps
-        out.totals = nTotals
       } else {
-        var plain = 0
-        for (var k = 0; k < values.length; k++) {
-          plain += Number(values[k]) || 0
-          out.totals.push(Number(values[k]) || 0)
-        }
+        for (var k = 0; k < values.length; k++) out.totals.push(Number(values[k]) || 0)
       }
     }
     return out
@@ -1277,6 +1319,21 @@ function formatDelta(n) {
   var v = Number(n) || 0
   var sign = v > 0 ? "+" : (v < 0 ? "−" : "")
   return sign + formatNumber(Math.abs(v))
+}
+
+// Exact integer with thousands separators, for hover tooltips on the compact
+// "#.##k"/"#.##M" display numbers (e.g. 16308 -> "16,308").
+function grouped(n) {
+  var v = Number(n)
+  if (!isFinite(v)) return ""
+  var neg = v < 0 ? "−" : ""
+  var s = String(Math.round(Math.abs(v)))
+  var out = ""
+  for (var i = 0; i < s.length; i++) {
+    if (i > 0 && (s.length - i) % 3 === 0) out += ","
+    out += s.charAt(i)
+  }
+  return neg + out
 }
 
 function formatRate(n) {

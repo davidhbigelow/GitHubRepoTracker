@@ -31,8 +31,8 @@ BarWidget {
   readonly property string btnText: Model.formatNumber(root.aggregate.total)
   readonly property string btnTooltip: {
     var whom = root.pinnedRepo !== ""
-      ? root.pinnedRepo + " downloads"
-      : "Repo Tracker · " + root.aggregate.count + " repos"
+      ? root.pinnedRepo + " · " + Model.grouped(root.aggregate.total) + " downloads"
+      : "Repo Tracker · " + Model.grouped(root.aggregate.total) + " · " + root.aggregate.count + " repos"
     if (!root.aggregate.totals || root.aggregate.totals.length < 2)
       return whom + " · collecting weekly history"
     var dir = root.aggregate.trend === "up" ? "↑ rising"

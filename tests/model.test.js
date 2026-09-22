@@ -129,6 +129,92 @@ const oneObservation = {
 };
 assert.equal(context.selectedTimeline([oneObservation], "dl", "monthly", "2026-09-14T20:00:00Z").source, "cohort");
 
+// A bounded cohort timeline must not render the current, still-open month as
+// zero: real observed activity inside that bucket (from the daily series) is
+// blended into the trailing slot so events and cumulative stay consistent.
+const blendedEntry = {
+  history: {
+    days: [
+      { bucket: "2026-09-10", observedAt: "2026-09-10T12:00:00.000Z", downloads: 100 },
+      { bucket: "2026-09-14", observedAt: "2026-09-14T12:00:00.000Z", downloads: 130 },
+      { bucket: "2026-09-22", observedAt: "2026-09-22T12:00:00.000Z", downloads: 155 },
+    ],
+    weeks: [], months: [], years: [],
+  },
+  cohorts: {
+    days: [], weeks: [], months: [
+      { bucket: "2026-07", downloads: 40, releases: 1, assets: 1 },
+      { bucket: "2026-08", downloads: 30, releases: 1, assets: 1 },
+    ], years: [],
+  },
+};
+const blended = context.selectedTimeline([blendedEntry], "dl", "monthly", "2026-09-22T12:00:00.000Z");
+assert.equal(blended.source, "cohort");
+assert.deepEqual(Array.from(blended.totals.slice(-2)), [30, 55]);
+assert.deepEqual(Array.from(context.displayTimeline(blended, true).totals.slice(-2)), [70, 125]);
+
+// A lifetime-cohort value would otherwise masquerade as this month's
+// downloads (a release's asset count is its all-time total). Real observed
+// activity in the current bucket takes precedence over it.
+const trailingCohort = {
+  ...blendedEntry,
+  cohorts: {
+    ...blendedEntry.cohorts,
+    months: [
+      ...blendedEntry.cohorts.months,
+      { bucket: "2026-09", downloads: 20, releases: 1, assets: 1 },
+    ],
+  },
+};
+const keepSlot = context.selectedTimeline([trailingCohort], "dl", "monthly", "2026-09-22T12:00:00.000Z");
+assert.equal(Number(keepSlot.totals.at(-1)), 55);
+
+// Aggregates must not under-report either: when any repo contributes an
+// observed current-bucket delta, the whole group's trailing slot uses the sum
+// of observed deltas, not the release-cohort scraps.
+const secondEntry = {
+  ...blendedEntry,
+  history: {
+    days: [
+      { bucket: "2026-09-11", observedAt: "2026-09-11T12:00:00.000Z", downloads: 20 },
+      { bucket: "2026-09-20", observedAt: "2026-09-20T12:00:00.000Z", downloads: 23 },
+    ],
+    weeks: [], months: [], years: [],
+  },
+  cohorts: {
+    days: [], weeks: [], months: [
+      { bucket: "2026-09", downloads: 10, releases: 1, assets: 1 },
+    ], years: [],
+  },
+};
+const aggregate = context.selectedTimeline([trailingCohort, secondEntry], "dl", "monthly", "2026-09-22T12:00:00.000Z");
+assert.deepEqual(Array.from(aggregate.totals.slice(-2)), [30, 58]);
+
+// Repos with no observed activity in the current bucket keep their cohort
+// value, so an unseen month stays as the release estimate rather than 0.
+const noObservations = {
+  ...blendedEntry,
+  history: { days: [], weeks: [], months: [], years: [] },
+  cohorts: {
+    ...blendedEntry.cohorts,
+    months: [
+      ...blendedEntry.cohorts.months,
+      { bucket: "2026-09", downloads: 20, releases: 1, assets: 1 },
+    ],
+  },
+};
+const unseen = context.selectedTimeline([noObservations], "dl", "monthly", "2026-09-22T12:00:00.000Z");
+assert.equal(Number(unseen.totals.at(-1)), 20);
+
+// The in-progress year is NOT overridden: the lifetime total of this year's
+// releases is a better year-to-date estimate than the measured daily span.
+const yearline = context.selectedTimeline([trailingCohort], "dl", "annual", "2026-09-22T12:00:00.000Z");
+assert.equal(Number(yearline.totals.at(-1)), 0);
+
+// Release/asset counts are snapshot counts, never blended into a cohort slot.
+const releaseBlend = context.selectedTimeline([blendedEntry], "releases", "monthly", "2026-09-22T12:00:00.000Z");
+assert.equal(Number(releaseBlend.totals.at(-1)), 0);
+
 const legacy = {
   repo: "owner/project",
   category: "mine",
@@ -264,9 +350,9 @@ assert.deepEqual(Array.from(staggered.buckets), ["2025", "2026"]);
 assert.deepEqual(Array.from(staggered.totals), [500, 900]);
 assert.deepEqual(Array.from(context.displayTimeline(staggered, false).totals), [0, 400]);
 
-// Cumulative cohort/star-cohort lines anchor each bucket's running total at the
-// END of that bucket (start of the next one / now), opening with the
-// carry-forward baseline so the first point is the previous period's total.
+// Cumulative cohort/star-cohort lines run the total along the source
+// timeline's own bucket positions, so the cumulative view steps exactly where
+// the events view spikes (cumulative[i] - cumulative[i-1] === events[i]).
 const anchoredEntry = {
   history: { days: [], weeks: [], months: [], years: [] },
   starCohorts: {
@@ -280,13 +366,17 @@ const anchored = context.displayTimeline(
   context.starCohortTimeline([anchoredEntry], "annual", "2026-09-15T02:00:00Z"),
   true);
 assert.equal(anchored.source, "star-cohort");
-assert.deepEqual(Array.from(anchored.totals), [0, 17891, 41106]);
+assert.deepEqual(Array.from(anchored.totals), [17891, 41106]);
 assert.deepEqual(
   Array.from(anchored.steps, (t) => new Date(t).toISOString().slice(0, 10)),
-  ["2025-01-01", "2026-01-01", "2026-09-15"]);
+  ["2025-01-01", "2026-09-15"]);
 const anchoredEvents = context.displayTimeline(
   context.starCohortTimeline([anchoredEntry], "annual", "2026-09-15T02:00:00Z"),
   false);
 assert.deepEqual(Array.from(anchoredEvents.totals), [17891, 23215]);
+assert.equal(context.grouped(16308), "16,308");
+assert.equal(context.grouped(0), "0");
+assert.equal(context.grouped(999), "999");
+assert.equal(context.grouped(1000000), "1,000,000");
 
 console.log("Model tests passed.");

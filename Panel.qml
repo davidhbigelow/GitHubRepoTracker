@@ -38,6 +38,9 @@ Panel {
   property var pendingAdds: []
   property var removeSel: []
 
+  // Version of the *installed* plugin manifest (may trail the source dir).
+  property string installedVersion: ""
+
   // Live refresh progress from the service (refresh-status.json). Rows whose
   // repo is still pending swap their sparkline for a spinner; the chart dims
   // behind a "Refreshing Data" overlay until the cycle drains.
@@ -214,6 +217,28 @@ Panel {
     onFileChanged: reload()
     onLoaded: root.refreshPending = Model.parseRefreshStatus(text()).pending
     onLoadFailed: root.refreshPending = []
+  }
+
+  // Read the installed plugin's manifest so the header shows what's actually
+  // deployed rather than the source tree's value.
+  function readInstalledVersion(raw) {
+    try {
+      var doc = JSON.parse(String(raw || ""))
+      var v = doc && doc.version ? String(doc.version) : ""
+      root.installedVersion = v.length > 0 ? v : ""
+    } catch (e) {
+      root.installedVersion = ""
+    }
+  }
+
+  FileView {
+    id: manifestFile
+    path: root.home + "/.config/omarchy/plugins/ghrepo.tracker/manifest.json"
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.readInstalledVersion(text())
+    onLoadFailed: root.readInstalledVersion("")
   }
 
   // Pull the current theme's green/red so chart trend colors stay in tune when
@@ -754,14 +779,27 @@ Panel {
             anchors.leftMargin: Style.space(4)
             spacing: Style.space(2)
 
-            Text {
-              textFormat: Text.PlainText
-              text: "GITHUB REPO TRACKER"
-              color: Qt.darker(root.panelForeground, 1.4)
-              font.family: Style.font.family
-              font.pixelSize: Style.font.caption
-              font.bold: true
-              font.letterSpacing: 1
+            Row {
+              spacing: Style.space(4)
+
+              Text {
+                textFormat: Text.PlainText
+                text: "GITHUB REPO TRACKER"
+                color: Qt.darker(root.panelForeground, 1.4)
+                font.family: Style.font.family
+                font.pixelSize: Style.font.caption
+                font.bold: true
+                font.letterSpacing: 1
+              }
+
+              Text {
+                visible: root.installedVersion !== ""
+                textFormat: Text.PlainText
+                text: "(v" + root.installedVersion + ")"
+                color: Qt.darker(root.panelForeground, 1.8)
+                font.family: Style.font.family
+                font.pixelSize: Style.font.caption
+              }
             }
 
             Text {
@@ -814,14 +852,36 @@ Panel {
               font.pixelSize: Style.font.body
             }
 
-            Text {
-              id: allTotal
-              textFormat: Text.PlainText
-              text: Model.formatNumber(root.allTotal)
-              color: root.panelForeground
-              font.family: Style.font.family
-              font.pixelSize: Style.font.heading
-              font.bold: true
+            Item {
+              id: allTotalWrap
+              width: allTotalText.implicitWidth
+              height: allTotalText.implicitHeight
+
+              Text {
+                id: allTotalText
+                textFormat: Text.PlainText
+                text: Model.formatNumber(root.allTotal)
+                color: root.panelForeground
+                font.family: Style.font.family
+                font.pixelSize: Style.font.heading
+                font.bold: true
+              }
+
+              MouseArea {
+                id: allTotalHover
+                anchors.fill: parent
+                hoverEnabled: true
+              }
+
+              // Hovering the headline number reveals the exact total. Anchored
+              // below because the title band is at the panel's top edge.
+              ValueTip {
+                anchors.fill: parent
+                value: root.allTotal
+                active: allTotalHover.containsMouse
+                below: true
+                accentColor: root.colorSuccess
+              }
             }
           }
         }
@@ -1181,6 +1241,24 @@ Panel {
                   font.pixelSize: Style.font.subtitle
                   font.bold: true
                 }
+
+                ValueTip {
+                  width: Style.space(56)
+                  height: Style.space(24)
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  before: true
+                  inline: true
+                  value: modelData.total
+                  active: tipHover.containsMouse
+                  accentColor: modelData.color
+                }
+
+                MouseArea {
+                  id: tipHover
+                  anchors.fill: parent
+                  hoverEnabled: true
+                }
               }
             }
 
@@ -1264,6 +1342,24 @@ Panel {
                   font.pixelSize: Style.font.subtitle
                   font.bold: true
                 }
+
+                ValueTip {
+                  width: Style.space(56)
+                  height: Style.space(24)
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  before: true
+                  inline: true
+                  value: root.removeEntry(modelData).total
+                  active: removeTipHover.containsMouse
+                  accentColor: Color.urgent
+                }
+
+                MouseArea {
+                  id: removeTipHover
+                  anchors.fill: parent
+                  hoverEnabled: true
+                }
               }
             }
 
@@ -1314,6 +1410,7 @@ Panel {
                   count: root.listFor(modelData).length
                   subText: root.categorySubtext(modelData)
                   totalText: Model.formatNumber(root.categoryTotal(modelData))
+                  total: root.categoryTotal(modelData)
                   trend: root.categoryTrend(modelData)
                   foreground: root.panelForeground
                   accent: root.colorSuccess

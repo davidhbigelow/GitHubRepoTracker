@@ -16,6 +16,7 @@ runtime_files=(
   Service.qml
   Sparkline.qml
   TotalsChart.qml
+  ValueTip.qml
   fetch_star_cohorts.py
 )
 
