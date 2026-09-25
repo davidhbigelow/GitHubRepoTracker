@@ -30,6 +30,12 @@ Item {
   // never races ahead of the on-disk state and re-fetches what we already have.
   property var viewState: ({})
 
+  // FileViews still waiting for their watchChanges watcher to arm, keyed by name.
+  // Also the config we last acted on, so armPoll can re-read a still-missing
+  // config once a second without re-logging or re-syncing every time.
+  property var unarmed: ({})
+  property string configStamp: ""
+
   property var queue: []
   property var current: null
   property var infoTask: null
@@ -54,6 +60,37 @@ Item {
     console.log("[ghrepotracker] " + msg)
   }
 
+  // ------------------------------------------------------------- armed watches
+
+  // Quickshell's FileView only arms its watchChanges watcher when the file it is
+  // pointed at can be resolved, and it never arms one afterwards. A view whose
+  // *parent directory* does not exist yet comes up permanently dead -- in
+  // particular refresh-request.json, which lives in the state dir mkdir has not
+  // created at the time this service is constructed. On a first run that leaves
+  // the service ignoring the panel's "Refresh now" button for the rest of the
+  // session. Re-reading a missing view does arm the watch, so keep reloading the
+  // unarmed ones until each lands and then stop -- a fully synced service pays
+  // nothing for this. (The config view is registered too: it resolves fine when
+  // the settings dir exists, and this keeps it working if it ever does not.)
+  function disarm(key) {
+    delete root.unarmed[key]
+  }
+
+  Timer {
+    id: armPoll
+    running: true
+    interval: 1000
+    repeat: true
+    triggeredOnStart: true
+    onTriggered: {
+      var keys = Object.keys(root.unarmed)
+      for (var i = 0; i < keys.length; i++) {
+        var view = root.unarmed[keys[i]]
+        if (view) view.reload()
+      }
+    }
+  }
+
   // ------------------------------------------------------------- config watch
 
   FileView {
@@ -62,7 +99,7 @@ Item {
     watchChanges: true
     printErrors: false
     onFileChanged: reload()
-    onLoaded: root.onConfigLoaded(text())
+    onLoaded: { root.disarm("config"); root.onConfigLoaded(text()) }
     onLoadFailed: root.onConfigLoaded("")
   }
 
@@ -74,6 +111,7 @@ Item {
     printErrors: false
     onFileChanged: reload()
     onLoaded: {
+      root.disarm("refreshRequest")
       var request = null
       try { request = JSON.parse(refreshRequestFile.text() || "{}") } catch (e) { request = null }
       if (request && request.requested) {
@@ -88,9 +126,16 @@ Item {
   }
 
   function onConfigLoaded(raw) {
-    root.config = Model.parseConfig(raw)
-    root.log("config: " + root.config.categories.mine.length +
-      " mine, " + root.config.categories.others.length + " others")
+    var next = Model.parseConfig(raw)
+    var stamp = next.categories.mine.join(",") + "|" + next.categories.others.join(",")
+      + "|" + next.refreshHours
+    // armPoll re-reads a still-missing config every second. Only act on a real
+    // change so an absent file stays quiet and does not re-run resync forever.
+    if (stamp === root.configStamp) return
+    root.configStamp = stamp
+    root.config = next
+    root.log("config: " + next.categories.mine.length +
+      " mine, " + next.categories.others.length + " others")
     root.resync()
   }
 
@@ -98,14 +143,27 @@ Item {
 
   Process {
     id: mkdirProc
-    command: ["mkdir", "-p", root.paths.cacheDir]
+    // Seed refresh-request.json alongside the directory: it is the panel's only
+    // way to poke this service, and nothing else creates it before the user's
+    // first manual refresh, so without this its watcher never arms on a first
+    // run and "Refresh now" is dead for the whole session.
+    command: ["sh", "-c",
+      "mkdir -p '" + root.paths.cacheDir + "' && { [ -e '"
+      + root.paths.refreshRequestPath + "' ] || printf '{}\\n' > '"
+      + root.paths.refreshRequestPath + "'; }"]
     onExited: function(code) {
       if (code !== 0) root.log("failed to create cache dir")
       configFile.reload()
+      // Both mirrors are panel-facing, and the first scheduled write can land
+      // before the directory exists. Emit them now that it does, so the panel's
+      // own watchers arm instead of polling forever for a file never written.
+      root.scheduleStoreWrite()
+      root.scheduleStatusWrite()
     }
   }
 
   Component.onCompleted: {
+    root.unarmed = { config: configFile, refreshRequest: refreshRequestFile }
     mkdirProc.running = true
   }
 
@@ -494,6 +552,7 @@ Item {
     id: staleTimer
     // Check hourly so a repo is refreshed shortly after its configured age,
     // rather than waiting another full refresh interval.
+    running: true
     interval: 60 * 60 * 1000
     repeat: true
     triggeredOnStart: true

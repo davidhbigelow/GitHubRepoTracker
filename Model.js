@@ -9,7 +9,9 @@ function pathsFor(home) {
     configPath: home + "/.config/omarchy/settings/ghrepotracker.json",
     storePath: home + "/.local/state/omarchy/ghrepotracker/store.json",
     refreshRequestPath: home + "/.local/state/omarchy/ghrepotracker/refresh-request.json",
-    refreshStatusPath: home + "/.local/state/omarchy/ghrepotracker/refresh-status.json"
+    refreshStatusPath: home + "/.local/state/omarchy/ghrepotracker/refresh-status.json",
+    // Which metric the panel was last showing, so the bar widget can follow it.
+    viewPath: home + "/.local/state/omarchy/ghrepotracker/view.json"
   }
 }
 
@@ -1285,20 +1287,115 @@ function findEntry(store, repo) {
   return null
 }
 
-function aggregateFor(store, pinned) {
-  if (!store) return { total: 0, values: [], totals: [], trend: "flat", label: "—", count: 0 }
+// ---- bar widget metric selection ---------------------------------------------
+
+// Metric ids are the panel's: dl / stars / releases. Kept in one place because
+// the panel, the persisted view and the bar widget all have to agree on them.
+function normalizeMetric(m) {
+  return m === "stars" || m === "releases" ? m : "dl"
+}
+
+function metricLabel(m) {
+  return normalizeMetric(m) === "stars" ? "stars"
+    : (normalizeMetric(m) === "releases" ? "releases" : "downloads")
+}
+
+// The raw counter GitHub reports for this repo: a star count and a release
+// count are lifetime values just like a download total, so the toolbar can show
+// any of them without inventing a "new" figure.
+function metricCounter(entry, m) {
+  if (!entry) return 0
+  var k = normalizeMetric(m)
+  if (k === "stars") return Number(entry.stars) || 0
+  if (k === "releases") return Number(entry.releaseCount) || 0
+  return Number(entry.total) || 0
+}
+
+// The matching observed series, used only for trend direction.
+function metricSeries(entry, m) {
+  if (!entry) return []
+  var k = normalizeMetric(m)
+  if (k === "stars") return entry.starTotals || []
+  if (k === "releases") return entry.releaseTotals || []
+  return entry.totals || []
+}
+
+function storeEntries(store) {
+  if (!store || !store.categories) return []
+  return (store.categories.mine || []).concat(store.categories.others || [])
+}
+
+// The store only precomputes a download rollup, so stars and releases are
+// summed here. The headline number is the sum of the raw counters; the trend
+// series is aligned on calendar years so repos with different histories still
+// line up bucket for bucket.
+function summedSeries(entries, m) {
+  var tl = selectedTimeline(entries, normalizeMetric(m), "annual")
+  return (tl && tl.totals) || []
+}
+
+function aggregateFor(store, pinned, metric) {
+  var m = normalizeMetric(metric)
+  if (!store) return { total: 0, values: [], totals: [], trend: "flat", label: "—", count: 0, metric: m, label_text: metricLabel(m) }
   if (pinned) {
     var en = findEntry(store, pinned)
-    if (en) return { total: en.total, values: en.values, totals: en.totals || [], trend: trendFromTotals(en.totals), label: en.name, count: 1 }
+    if (en) {
+      var series = metricSeries(en, m)
+      return {
+        total: metricCounter(en, m),
+        values: series,
+        totals: series,
+        trend: trendFromTotals(series),
+        label: en.name,
+        count: 1,
+        metric: m,
+        label_text: metricLabel(m)
+      }
+    }
   }
+  var entries = storeEntries(store)
+  if (m === "dl" && store.totals) {
+    // Downloads already have a store-level rollup; trust it rather than
+    // re-deriving it.
+    return {
+      total: (store.totals && store.totals.all) || 0,
+      values: store.allValues || [],
+      totals: store.allTotals || [],
+      trend: trendFromTotals(store.allTotals),
+      label: "all tracked",
+      count: store.count || 0,
+      metric: m,
+      label_text: metricLabel(m)
+    }
+  }
+  var sum = 0
+  for (var i = 0; i < entries.length; i++) sum += metricCounter(entries[i], m)
+  var all = m === "dl" ? (store.allTotals || []) : summedSeries(entries, m)
   return {
-    total: (store.totals && store.totals.all) || 0,
-    values: store.allValues || [],
-    totals: store.allTotals || [],
-    trend: trendFromTotals(store.allTotals),
+    total: sum,
+    values: all,
+    totals: all,
+    trend: trendFromTotals(all),
     label: "all tracked",
-    count: store.count || 0
+    count: store.count || 0,
+    metric: m,
+    label_text: metricLabel(m)
   }
+}
+
+// Last metric the panel was showing. Unknown or missing values fall back to
+// downloads so a hand-edited or truncated file can never blank the toolbar.
+function parseView(raw) {
+  var out = { metric: "dl" }
+  try {
+    var doc = JSON.parse(raw || "{}")
+    if (doc && doc.metric) out.metric = normalizeMetric(String(doc.metric))
+  } catch (e) { /* keep the default */ }
+  return out
+}
+
+function viewText(view) {
+  return JSON.stringify({ metric: normalizeMetric(view && view.metric) }) + "\n"
 }
 
 // ---- formatting ------------------------------------------------------------

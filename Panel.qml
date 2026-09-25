@@ -82,6 +82,14 @@ Panel {
   property string addCategory: "mine"
   property string addError: ""
 
+  // Latched once this particular open has decided whether to jump into the add
+  // form, so the check runs at most one time per open rather than on every
+  // config reload. "Resolved" means the config file has actually been read: a
+  // fresh install has none until a repo is added, and a panel that guessed
+  // before that would see an empty list and think the user tracks nothing.
+  property bool addPromptDecided: false
+  property bool configResolved: false
+
   // Theme trend colors for the chart (green = success, red = warning), read
   // from the resolved per-theme colors.toml that Color consumes.
   property color colorSuccess: Color.accent
@@ -89,7 +97,10 @@ Panel {
 
   // ALL / MINE / OTHERS tab + timeline period grouping. Each period has a
   // fixed retained windows (30 days / 8 ISO weeks / 12 months / all years).
-  property string group: "others"
+  // Defaults are what a panel shows the moment it opens: ALL categories, and
+  // ANNUAL buckets, so a first run lands on the broadest view rather than a
+  // single category that may well be empty.
+  property string group: "all"
   property string period: "annual"
   property bool cumulative: false
 
@@ -151,6 +162,9 @@ Panel {
     ensureDirs()
     storeFile.reload()
     configFile.reload()
+    // Re-decide every open: with nothing tracked the add form is the right
+    // landing spot, and that stays true after the last repo is removed.
+    root.addPromptDecided = false
     root.controller.show()
   }
 
@@ -170,6 +184,54 @@ Panel {
 
   // ------------------------------------------------------------------ data
 
+  // Quickshell's FileView only arms its watchChanges watcher when the file it is
+  // pointed at can be resolved, and it never arms one afterwards. A view whose
+  // parent directory does not exist yet comes up permanently dead -- store.json
+  // and refresh-status.json live in the state dir, which the service only creates
+  // after this panel loads, so on a first run the panel never sees the first
+  // fetch land and "Refresh now" appears to do nothing. A reload() of a missing
+  // view does arm the watch, so keep reloading the unarmed ones until each lands
+  // and then stop -- a synced panel pays nothing for this.
+  property var unarmed: ({})
+
+  // Last store/config we applied. The arm poll re-reads a still-missing file
+  // every second, and both feed bindings all over this panel, so only publish a
+  // change when the contents actually moved.
+  property string storeStamp: ""
+  property bool storeSeen: false
+  property string configStamp: ""
+  property bool configSeen: false
+
+  function disarm(key) {
+    delete root.unarmed[key]
+  }
+
+  Timer {
+    id: armPoll
+    running: true
+    interval: 1000
+    repeat: true
+    triggeredOnStart: true
+    onTriggered: {
+      var keys = Object.keys(root.unarmed)
+      for (var i = 0; i < keys.length; i++) {
+        var view = root.unarmed[keys[i]]
+        if (view) view.reload()
+      }
+    }
+  }
+
+  Component.onCompleted: {
+    root.unarmed = {
+      store: storeFile,
+      config: configFile,
+      status: refreshStatusFile,
+      theme: themeFile,
+      manifest: manifestFile,
+      view: viewFile
+    }
+  }
+
   FileView {
     id: storeFile
     path: root.paths.storePath
@@ -177,10 +239,18 @@ Panel {
     printErrors: false
     onFileChanged: reload()
     onLoaded: {
-      root.store = Model.parseStore(text())
+      root.disarm("store")
+      var raw = text()
+      if (root.storeSeen && raw === root.storeStamp) return
+      root.storeSeen = true
+      root.storeStamp = raw
+      root.store = Model.parseStore(raw)
       root.updatePending()
     }
     onLoadFailed: {
+      if (!root.storeSeen) return
+      root.storeSeen = false
+      root.storeStamp = ""
       root.store = null
       root.updatePending()
     }
@@ -193,10 +263,49 @@ Panel {
     printErrors: false
     onFileChanged: reload()
     onLoaded: {
-      root.config = Model.parseConfig(text())
-      root.updatePending()
+      root.disarm("config")
+      root.configResolved = true
+      var raw = text()
+      // The dedupe only guards the parse and the publish; the add-prompt check
+      // runs every time, because a reopen with an unchanged config still has to
+      // re-decide where to land.
+      if (!root.configSeen || raw !== root.configStamp) {
+        root.configSeen = true
+        root.configStamp = raw
+        root.config = Model.parseConfig(raw)
+        root.updatePending()
+      }
+      root.maybePromptFirstAdd()
     }
-    onLoadFailed: root.config = Model.parseConfig("")
+    onLoadFailed: {
+      // A config that does not exist yet is a resolved answer too: on a fresh
+      // install this file never appears until a repo is added, and the panel
+      // still has to decide whether to ask for one.
+      root.configResolved = true
+      if (root.configSeen) {
+        root.configSeen = false
+        root.configStamp = ""
+        root.config = Model.parseConfig("")
+        root.updatePending()
+      }
+      root.maybePromptFirstAdd()
+    }
+  }
+
+  // The metric the toolbar is currently showing. Read on open so the dialog
+  // never contradicts the bar, and watched because it lives in the state dir
+  // that the service may not have created yet.
+  FileView {
+    id: viewFile
+    path: root.paths.viewPath
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: {
+      root.disarm("view")
+      root.metric = Model.parseView(text()).metric
+    }
+    onLoadFailed: root.metric = "dl"
   }
 
   FileView {
@@ -205,7 +314,7 @@ Panel {
     watchChanges: true
     printErrors: false
     onFileChanged: reload()
-    onLoaded: root.readThemeColors(text())
+    onLoaded: { root.disarm("theme"); root.readThemeColors(text()) }
     onLoadFailed: root.readThemeColors("")
   }
 
@@ -215,7 +324,7 @@ Panel {
     watchChanges: true
     printErrors: false
     onFileChanged: reload()
-    onLoaded: root.refreshPending = Model.parseRefreshStatus(text()).pending
+    onLoaded: { root.disarm("status"); root.refreshPending = Model.parseRefreshStatus(text()).pending }
     onLoadFailed: root.refreshPending = []
   }
 
@@ -237,7 +346,7 @@ Panel {
     watchChanges: true
     printErrors: false
     onFileChanged: reload()
-    onLoaded: root.readInstalledVersion(text())
+    onLoaded: { root.disarm("manifest"); root.readInstalledVersion(text()) }
     onLoadFailed: root.readInstalledVersion("")
   }
 
@@ -579,6 +688,14 @@ Panel {
     writeConfig()
     root.removeSel = []
     root.mode = "list"
+    // Removing the last repo leaves nothing to look at, so do not sit there on
+    // an empty panel. Latch the prompt off so our own config write does not pop
+    // the add form on the way out; open() clears the latch, so the next toolbar
+    // click lands straight back in it.
+    if (!root.hasTrackedRepos()) {
+      root.addPromptDecided = true
+      Qt.callLater(root.close)
+    }
   }
 
   function colorForIndex(i) {
@@ -670,6 +787,44 @@ Panel {
   function cancelAdd() {
     root.addError = ""
     root.mode = "list"
+  }
+
+  function hasTrackedRepos() {
+    var cats = root.config && root.config.categories ? root.config.categories : null
+    if (!cats) return false
+    return (cats.mine && cats.mine.length > 0) || (cats.others && cats.others.length > 0)
+  }
+
+  // Metric selection is the one bit of view state the toolbar mirrors, so it is
+  // written out on every change rather than living only in this panel instance.
+  function setMetric(id) {
+    var m = Model.normalizeMetric(id)
+    if (root.metric === m) return
+    root.metric = m
+    writeView()
+  }
+
+  function writeView() {
+    var wv = Qt.createQmlObject(
+      'import QtQuick; import Quickshell.Io; FileView { atomicWrites: true; printErrors: false; watchChanges: false }',
+      root, "panelViewWriter")
+    wv.path = root.paths.viewPath
+    wv.setText(Model.viewText({ metric: root.metric }))
+    wv.saved.connect(function(view) { return function() { view.destroy() } }(wv))
+    wv.saveFailed.connect(function(view) { return function() { view.destroy() } }(wv))
+  }
+
+  // A fresh install has no config, so the panel would open on an empty list with
+  // no hint that a repo is what makes this thing do anything. Jump straight into
+  // the add form the first time someone opens this with nothing tracked, then
+  // never again.
+  function maybePromptFirstAdd() {
+    if (!root.configResolved) return
+    if (root.addPromptDecided) return
+    root.addPromptDecided = true
+    if (root.mode !== "list") return
+    if (root.hasTrackedRepos()) return
+    root.beginAdd()
   }
 
   function requestAdd() {
@@ -830,7 +985,7 @@ Panel {
                 foreground: root.panelForeground
                 accent: Color.accent
                 fontFamily: Style.font.family
-                onClicked: root.metric = modelData.id
+                onClicked: root.setMetric(modelData.id)
 
                 MetricIcon {
                   anchors.centerIn: parent
@@ -1387,7 +1542,8 @@ Panel {
 
         // ---- category lists -------------------------------------------------
         Item {
-          visible: root.mode === "list" || root.mode === "sel" || root.mode === "rem"
+          visible: (root.mode === "list" || root.mode === "sel" || root.mode === "rem")
+            && root.hasTrackedRepos()
           width: parent.width
           height: visible ? categoryLists.implicitHeight : 0
 
@@ -1463,6 +1619,56 @@ Panel {
                   opacity: 0.12
                 }
               }
+            }
+          }
+        }
+
+        // ---- empty state -----------------------------------------------------
+        // Shown instead of the "MINE 0 / OTHERS 0" headers when nothing is
+        // tracked, so a user who dismissed the first-run prompt still learns
+        // what this panel wants from them.
+        Item {
+          id: emptyState
+          visible: root.configResolved
+            && (root.mode === "list" || root.mode === "sel" || root.mode === "rem")
+            && !root.hasTrackedRepos()
+          width: parent.width
+          height: visible ? emptyColumn.implicitHeight : 0
+
+          Column {
+            id: emptyColumn
+            width: parent.width
+            spacing: Style.spacing.sm
+
+            Text {
+              width: parent.width
+              horizontalAlignment: Text.AlignHCenter
+              textFormat: Text.PlainText
+              text: "No repositories yet"
+              color: root.panelForeground
+              font.family: Style.font.family
+              font.pixelSize: Style.font.body
+            }
+
+            Text {
+              width: parent.width
+              horizontalAlignment: Text.AlignHCenter
+              wrapMode: Text.WordWrap
+              textFormat: Text.PlainText
+              text: "Add a GitHub repository to start tracking releases, stars and downloads."
+              color: root.panelForeground
+              opacity: 0.7
+              font.family: Style.font.family
+              font.pixelSize: Style.font.bodySmall
+            }
+
+            Button {
+              anchors.horizontalCenter: parent.horizontalCenter
+              text: "Add repository"
+              foreground: root.panelForeground
+              accent: Color.accent
+              fontFamily: Style.font.family
+              onClicked: root.beginAdd()
             }
           }
         }

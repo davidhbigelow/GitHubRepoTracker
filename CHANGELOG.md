@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.4.0 - 2026-09-25
+
+- "Refresh now" works on a fresh install. Quickshell's `FileView` never arms its
+  `watchChanges` watcher when the file's parent directory does not exist yet, so
+  on a first run the service's refresh-request watcher and the panel's
+  `store.json` / `refresh-status.json` watchers came up permanently dead: the
+  button wrote a request nobody read, and the first fetch never appeared. The
+  service now creates the state directory up front and seeds
+  `refresh-request.json`, and both the service and the panel re-read only the
+  views that have not loaded yet until each one lands.
+- The plugin's hourly staleness check had never run: `staleTimer` was missing
+  `running: true`, so repos were only ever refreshed on startup or by hand.
+- A panel with nothing tracked now opens straight into the add-repository form
+  instead of two empty category headers, on a fresh install and again after the
+  last repo is removed. Removing every repo also closes the panel rather than
+  leaving an empty shell on screen.
+- A panel with no repos shows a short empty state explaining that a repository
+  is needed, with a button to add one.
+- The panel opens on the ALL tab with ANNUAL buckets, so a first run lands on
+  the broadest view rather than a category that may be empty.
+- The bar widget follows the metric last selected in the panel: it shows the
+  download, star or release total for that metric, sums it across tracked repos
+  when unpinned, and names the metric in its tooltip. Downloads keep using the
+  store's precomputed rollup; stars and releases are summed on read, with the
+  trend series aligned on calendar years so repos with different histories
+  still compare bucket for bucket.
+
 ## 0.3.0 - 2026-09-22
 
 - Monthly/weekly/annual charts: cumulative lines for release-cohort and

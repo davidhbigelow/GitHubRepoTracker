@@ -18,11 +18,15 @@ BarWidget {
 
   readonly property string home: Quickshell.env("HOME") || ""
   readonly property var storePath: Model.pathsFor(home).storePath
+  readonly property var viewPath: Model.pathsFor(home).viewPath
 
   property var store: null
+  // Which metric the panel was last left on, so the toolbar count follows the
+  // dialog instead of being pinned to downloads forever.
+  property string metric: "dl"
   readonly property string pinnedRepo: root.setting("repo", "")
 
-  readonly property var aggregate: Model.aggregateFor(root.store, root.pinnedRepo)
+  readonly property var aggregate: Model.aggregateFor(root.store, root.pinnedRepo, root.metric)
   readonly property color trendColor: {
     if (root.aggregate.trend === "up") return Color.accent
     if (root.aggregate.trend === "down") return Color.urgent
@@ -30,14 +34,32 @@ BarWidget {
   }
   readonly property string btnText: Model.formatNumber(root.aggregate.total)
   readonly property string btnTooltip: {
+    var unit = root.aggregate.label_text
     var whom = root.pinnedRepo !== ""
-      ? root.pinnedRepo + " · " + Model.grouped(root.aggregate.total) + " downloads"
-      : "Repo Tracker · " + Model.grouped(root.aggregate.total) + " · " + root.aggregate.count + " repos"
+      ? root.pinnedRepo + " · " + Model.grouped(root.aggregate.total) + " " + unit
+      : "Repo Tracker · " + Model.grouped(root.aggregate.total) + " " + unit + " · " + root.aggregate.count + " repos"
     if (!root.aggregate.totals || root.aggregate.totals.length < 2)
       return whom + " · collecting weekly history"
     var dir = root.aggregate.trend === "up" ? "↑ rising"
       : (root.aggregate.trend === "down" ? "↓ falling" : "· flat")
     return whom + " · " + dir
+  }
+
+  // view.json lives in the state dir, which the service creates after this
+  // widget comes up. Same dead-watcher trap as the panel: re-read until the
+  // file lands, then stop.
+  property bool viewArmed: false
+  Timer {
+    id: viewArmPoll
+    running: true
+    interval: 1000
+    repeat: true
+    triggeredOnStart: true
+    onTriggered: {
+      if (root.viewArmed) return
+      if (viewFile.status === 0 || viewFile.status === 1) root.viewArmed = true
+      else viewFile.reload()
+    }
   }
 
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
@@ -85,6 +107,19 @@ BarWidget {
     onFileChanged: reload()
     onLoaded: root.store = Model.parseStore(text())
     onLoadFailed: root.store = null
+  }
+
+  FileView {
+    id: viewFile
+    path: root.viewPath
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: {
+      root.viewArmed = true
+      root.metric = Model.parseView(text()).metric
+    }
+    onLoadFailed: root.metric = "dl"
   }
 
   // Live theme switches rewrite this file (and push `shell applyTheme` IPC).
