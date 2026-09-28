@@ -153,7 +153,7 @@ Panel {
       var cohortMode = root.cumulative ? "cumulative release cohorts" : "by release date"
       return root.metricLabel(root.metric) + " " + cohortMode + " · " + root.windowText + " · " + count + " cohorts"
     }
-    var buckets = count + "/" + root.chartDomain.slots + " observed buckets"
+    var buckets = count + "/" + root.chartDomain.slots + " buckets logged"
     var observedMode = root.cumulative ? "cumulative" : "change"
     return root.metricLabel(root.metric) + " " + observedMode + " · " + root.windowText + " · " + buckets
   }
@@ -408,6 +408,7 @@ Panel {
       starCohortsUpdatedAt: e.starCohortsUpdatedAt || "",
       lastUpdated: e.lastUpdated || "",
       error: e.error || "",
+      failure: e.failure || null,
       pending: e.pending === true
     }
     var selected = source === "cohort" || source === "star-cohort"
@@ -514,6 +515,7 @@ Panel {
     console.log("[ghrepotracker] chart " + root.group + "/" + root.metric + "/" + root.period + (root.cumulative ? "/cum" : "/evt")
       + " n=" + out.steps.length
       + " src=" + out.source
+      + " hdr=" + JSON.stringify(root.historySummary)
       + " pts=" + JSON.stringify(out.steps.slice(0, 14).map(function(t, i) { return new Date(t).toISOString().slice(0, 10) + ":" + out.totals[i] }))
       + " " + ms + "ms")
     return out
@@ -1052,6 +1054,23 @@ Panel {
             width: parent.width
             spacing: Style.space(6)
 
+            // Header label for the chart: what the series measures, the window
+            // it covers, and how much of that window is actually logged. The
+            // "N/M observed buckets" tail is the incomplete-period signal, and
+            // it is the only place the window length is spelled out at all.
+            Text {
+              visible: root.mode !== "compare" && root.historySummary !== ""
+              width: parent.width
+              horizontalAlignment: Text.AlignHCenter
+              textFormat: Text.PlainText
+              text: root.historySummary
+              color: root.panelForeground
+              opacity: 0.7
+              font.family: Style.font.family
+              font.pixelSize: Style.font.caption
+              elide: Text.ElideRight
+            }
+
             Item {
               visible: root.mode !== "compare"
               width: parent.width
@@ -1091,7 +1110,8 @@ Panel {
                 font.bold: true
               }
 
-              // Pinned repo chip: name with an inline warning-colored close
+            // Pinned repo chip: name with an inline warning-colored close
+
               // glyph. The whole chip is one click target — tap the name or
               // the ✕ to drop the pin and return to the group chart.
               Item {

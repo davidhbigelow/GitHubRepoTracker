@@ -17,7 +17,7 @@ runtime_files=(
   Sparkline.qml
   TotalsChart.qml
   ValueTip.qml
-  fetch_star_cohorts.py
+  fetch_github_data.py
 )
 
 python3 "$root/scripts/validate_manifest.py" "$root"

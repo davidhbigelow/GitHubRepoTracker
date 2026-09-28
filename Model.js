@@ -104,47 +104,74 @@ function parseGithubUrl(input) {
   return { owner: m[1], repo: m[2].replace(/\.git$/i, "") }
 }
 
-// ---- github ----------------------------------------------------------------
-
-function githubUrl(repo, page) {
-  // repo is "owner/name". The slash is a real path separator here, so the
-  // segments are encoded individually (encodeURIComponent would turn the
-  // slash into %2F and GitHub answers 404 for the encoded path).
-  var parts = String(repo || "").split("/")
-  var owner = encodeURIComponent(parts[0] || "")
-  var name = encodeURIComponent((parts[1] || "NO_REPO"))
-  return "https://api.github.com/repos/" + owner + "/" + name +
-    "/releases?per_page=100&page=" + (page || 1)
-}
-
-// Repo metadata (stars, creation date) for the stars/releases metrics.
-function repoInfoUrl(repo) {
-  var parts = String(repo || "").split("/")
-  var owner = encodeURIComponent(parts[0] || "")
-  var name = encodeURIComponent((parts[1] || "NO_REPO"))
-  return "https://api.github.com/repos/" + owner + "/" + name
-}
-
-function parseRepoInfo(raw) {
-  try {
-    var p = JSON.parse(String(raw || ""))
-    if (!p || typeof p !== "object") return null
-    return {
-      stars: Number(p.stargazers_count) || 0,
-      created: p.created_at ? String(p.created_at).replace("Z", "+00:00") : ""
-    }
-  } catch (e) {
-    return null
+function classifyStarFailure(detail, exitCode) {
+  var text = String(detail == null ? "" : detail)
+  var lower = text.toLowerCase()
+  var code = /http (\d{3})/.exec(lower)
+  var http = code ? Number(code[1]) : 0
+  var reset = /resets (\d{10})/.exec(lower)
+  var resetAt = reset ? new Date(Number(reset[1]) * 1000).toISOString() : ""
+  if (http === 429 || lower.indexOf("rate limit") >= 0) {
+    return { kind: "rate-limited", detail: "GitHub API rate limit reached", resetAt: resetAt, scope: "stars" }
+  }
+  if (http === 401) {
+    return { kind: "not-authenticated", detail: "GitHub rejected the credentials", resetAt: "", scope: "stars" }
+  }
+  if (http === 403) {
+    return { kind: "forbidden", detail: "GitHub refused the request (403)", resetAt: "", scope: "stars" }
+  }
+  if (http === 404) {
+    return { kind: "not-found", detail: "Repository or endpoint not found", resetAt: "", scope: "stars" }
+  }
+  var fallback = String(text).split("\n")[0]
+  if (fallback.length > 120) fallback = fallback.substring(0, 120)
+  return {
+    kind: "unknown",
+    detail: fallback || (exitCode === 0 ? "Invalid star history response" : "Star history fetch failed"),
+    resetAt: "",
+    scope: "stars"
   }
 }
 
-function fetchCommand(url) {
-  var cmd = ["curl", "-fsS", "--max-time", "20", "--max-filesize", "8388608",
-    "-H", "Accept: application/vnd.github+json",
-    "-H", "X-GitHub-Api-Version: 2022-11-28",
-    "-H", "User-Agent: ghrepotracker-omarchy-plugin"]
-  cmd.push(url)
-  return cmd
+// Compact "3d ago" / "5h ago" / "just now" for the staleness half of the notice.
+function relativeAge(iso) {
+  var ms = Date.parse(iso || "")
+  if (!isFinite(ms)) return ""
+  var mins = Math.floor((Date.now() - ms) / 60000)
+  if (mins < 1) return "just now"
+  if (mins < 60) return mins + "m ago"
+  var hours = Math.floor(mins / 60)
+  if (hours < 24) return hours + "h ago"
+  return Math.floor(hours / 24) + "d ago"
+}
+
+function clockTime(iso) {
+  var ms = Date.parse(iso || "")
+  if (!isFinite(ms)) return ""
+  var d = new Date(ms)
+  function two(n) { return n < 10 ? "0" + n : "" + n }
+  return two(d.getHours()) + ":" + two(d.getMinutes())
+}
+
+// The one-line notice a repo row shows while a fetch is failing, naming the
+// cause and its fix rather than just "an error". Persistent instead of
+// rotating: the actionable wording has to survive until it is actually read.
+function formatFailure(failure, lastUpdated) {
+  if (!failure || !failure.kind) return ""
+  var head = ""
+  if (failure.kind === "rate-limited") {
+    var at = clockTime(failure.resetAt)
+    head = at ? "Rate limited by GitHub, resets " + at : "Rate limited by GitHub"
+  } else if (failure.kind === "not-authenticated") {
+    head = "Not signed in to GitHub, run: gh auth login"
+  } else {
+    head = failure.detail || "Fetch failed"
+  }
+  // A star-history failure leaves the download numbers current, so quoting the
+  // observation age would understate it; name the affected series instead.
+  if (failure.scope === "stars") return head + ", star history not updated"
+  var age = relativeAge(lastUpdated)
+  return age ? head + ", showing data from " + age : head
 }
 
 function sumReleases(releases) {
@@ -168,8 +195,8 @@ function sumReleases(releases) {
 
 // ---- cache docs ------------------------------------------------------------
 
-var SCHEMA_VERSION = 3
-var HISTORY_LIMITS = { days: 30, weeks: 8, months: 12, years: 0 }
+var SCHEMA_VERSION = 4
+var HISTORY_LIMITS = { days: 30, weeks: 12, months: 12, years: 0 }
 
 function dayKey(date) {
   function two(n) { return n < 10 ? "0" + n : "" + n }
@@ -184,7 +211,7 @@ function emptyCache(repo, category) {
     added: nowIso(),
     created: "",
     current: { downloads: 0, stars: 0, releases: 0, assets: 0, observedAt: "" },
-    status: { lastAttemptAt: "", lastSuccessAt: "", error: "" },
+    status: { lastAttemptAt: "", lastSuccessAt: "", error: "", failure: null },
     history: emptyCollections(),
     cohorts: emptyCollections(),
     starCohorts: emptyCollections(),
@@ -384,7 +411,7 @@ function addHistoricalSample(doc, sample) {
 // download counts. Missing metrics on old snapshots remain unknown.
 function migrateCache(legacy) {
   if (!legacy || typeof legacy !== "object") return null
-  if ((legacy.schemaVersion === 2 || legacy.schemaVersion === SCHEMA_VERSION) && legacy.current && legacy.history) {
+  if ((legacy.schemaVersion === 2 || legacy.schemaVersion === 3 || legacy.schemaVersion === SCHEMA_VERSION) && legacy.current && legacy.history) {
     var normalized = emptyCache(legacy.repo || "", legacy.category || "others")
     normalized.added = legacy.added || normalized.added
     normalized.created = legacy.created || ""
@@ -398,7 +425,8 @@ function migrateCache(legacy) {
     normalized.status = {
       lastAttemptAt: legacy.status && legacy.status.lastAttemptAt || "",
       lastSuccessAt: legacy.status && legacy.status.lastSuccessAt || "",
-      error: legacy.status && legacy.status.error || ""
+      error: legacy.status && legacy.status.error || "",
+      failure: legacy.status && legacy.status.failure || null
     }
     var names = ["days", "weeks", "months", "years"]
     for (var n = 0; n < names.length; n++) normalized.history[names[n]] = upsertBucket(legacy.history[names[n]], null, names[n])
@@ -430,7 +458,7 @@ function migrateCache(legacy) {
     assets: Number(legacy.assets) || 0,
     observedAt: at
   }
-  doc.status = { lastAttemptAt: at, lastSuccessAt: at, error: legacy.error || "" }
+  doc.status = { lastAttemptAt: at, lastSuccessAt: at, error: legacy.error || "", failure: null }
   if (legacy.releaseMeta) doc.cohorts = releaseCohorts(legacy.releaseMeta)
   if (isFinite(Date.parse(at))) addHistoricalSample(doc, {
     observedAt: at,
@@ -442,7 +470,7 @@ function migrateCache(legacy) {
   return doc
 }
 
-function recordObservation(doc, values, at, error) {
+function recordObservation(doc, values, at, error, failure) {
   doc = migrateCache(doc) || emptyCache("", "others")
   var observedAt = at || nowIso()
   doc.current = {
@@ -452,7 +480,9 @@ function recordObservation(doc, values, at, error) {
     assets: Number(values.assets) || 0,
     observedAt: observedAt
   }
-  doc.status = { lastAttemptAt: observedAt, lastSuccessAt: observedAt, error: error || "" }
+  // A successful observation clears the previous failure so a recovered repo
+  // stops showing a notice.
+  doc.status = { lastAttemptAt: observedAt, lastSuccessAt: observedAt, error: error || "", failure: failure || null }
   addHistoricalSample(doc, {
     observedAt: observedAt,
     downloads: doc.current.downloads,
@@ -463,10 +493,13 @@ function recordObservation(doc, values, at, error) {
   return doc
 }
 
-function recordFailure(doc, error, at) {
+// `failure` is the structured diagnosis from classifyStarFailure. The plain
+// string form still works, so status.error remains readable either way.
+function recordFailure(doc, error, at, failure) {
   doc = migrateCache(doc) || emptyCache("", "others")
   doc.status.lastAttemptAt = at || nowIso()
   doc.status.error = error || "request failed"
+  doc.status.failure = failure || null
   return doc
 }
 
@@ -751,7 +784,7 @@ function combineDaily(list) {
 }
 
 // Default windows for the timeline periods (in whole buckets), today-anchored.
-var PERIOD_WINDOWS = { daily: 30, weekly: 8, monthly: 12, annual: 0 }
+var PERIOD_WINDOWS = { daily: 30, weekly: 12, monthly: 12, annual: 0 }
 
 // Daily view is capped to 30 real observation days. Older observations remain
 // available in weekly/monthly/annual buckets.
@@ -811,15 +844,20 @@ function collectionForPeriod(period) {
 function periodDomain(period, observedSteps, at) {
   var now = new Date(at || Date.now())
   var today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
+  // Window sizes come from PERIOD_WINDOWS so the chart, the retention limit and
+  // the schema cannot drift apart.
   if (period === "daily") {
-    return { start: today - 29 * 86400000, end: today, slots: 30 }
+    var dslots = PERIOD_WINDOWS.daily
+    return { start: today - (dslots - 1) * 86400000, end: today, slots: dslots }
   }
   if (period === "weekly") {
+    var wslots = PERIOD_WINDOWS.weekly
     var monday = Date.parse(weekStartISO(new Date(today)))
-    return { start: monday - 7 * 7 * 86400000, end: today, slots: 8 }
+    return { start: monday - (wslots - 1) * 7 * 86400000, end: today, slots: wslots }
   }
   if (period === "monthly") {
-    return { start: Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 11, 1), end: today, slots: 12 }
+    var mslots = PERIOD_WINDOWS.monthly
+    return { start: Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - (mslots - 1), 1), end: today, slots: mslots }
   }
   var endYear = now.getUTCFullYear()
   var startYear = endYear
@@ -938,6 +976,20 @@ function haveStarCohorts(entries) {
   return true
 }
 
+// The helper stores what GitHub's star history actually covers, which is not
+// every collection: a repo with only yearly buckets can still answer the annual
+// view while leaving a daily or weekly reconstruction empty. Check the specific
+// collection before trusting it, or a sparse view would render as all zeros.
+function haveStarCohortsFor(entries, period) {
+  if (!haveStarCohorts(entries)) return false
+  var collection = collectionForPeriod(period)
+  for (var i = 0; i < entries.length; i++) {
+    var groups = entries[i].starCohorts
+    if (groups && groups[collection] && groups[collection].length) return true
+  }
+  return false
+}
+
 function timelineInDomain(timeline, period, at) {
   if (period === "annual") return timeline
   var domain = periodDomain(period, timeline.steps, at)
@@ -990,9 +1042,19 @@ function currentBucketObservedVolume(entries, metric, period, at) {
 function selectedTimeline(entries, metric, period, at) {
   var observed = timelineInDomain(historyTimeline(entries, metric, period), period, at)
   observed.source = "observed"
-  if (observed.steps.length >= 2) return observed
+  // Star history from GitHub is real, public and dense, so a complete
+  // reconstruction beats a partly measured window: on the daily view two logged
+  // days would otherwise leave 28 slots empty for a whole month. Observed
+  // measurements still win once they can fill the window, and the reconstruction
+  // is used only when the star cohorts actually cover this period.
+  var window = PERIOD_WINDOWS[period] || 0
+  // A fixed window is judged directly. The annual window is derived from the
+  // data itself, so it keeps the original rule of two or more observed years.
+  var unfilled = window ? observed.steps.length < window : observed.steps.length < 2
+  var useStarCohorts = metric === "stars" && haveStarCohortsFor(entries, period) && unfilled
+  if (!useStarCohorts && observed.steps.length >= 2) return observed
   var fallback
-  if (metric === "stars" && haveStarCohorts(entries)) fallback = starCohortTimeline(entries, period, at)
+  if (useStarCohorts) fallback = starCohortTimeline(entries, period, at)
   else if (metric === "stars") return observed
   else fallback = cohortTimeline(entries, metric, period, at)
   // Blend this repo's real observed current-period activity into the trailing
@@ -1171,7 +1233,8 @@ function entryFor(doc, config, repo) {
     starDayTotals: starDaily.totals,
     lastUpdated: current.observedAt || "",
     hasData: current.observedAt !== "" || observed.totals.length > 0,
-    error: doc.status.error || ""
+    error: doc.status.error || "",
+    failure: doc.status.failure || null
   }
 }
 

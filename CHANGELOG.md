@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.4.1 - 2026-09-27
+
+- Repository data is now collected in a single process per repo. The service
+  used to run three separate pipelines -- releases metadata, then repository
+  info, then star history -- each starting its own process and each able to fail
+  on its own. `fetch_star_cohorts.py` is now `fetch_github_data.py` and returns
+  releases, info and star cohorts together, so a slow or failing star lookup can
+  no longer delay or hide the release counts.
+- GitHub requests are authenticated, using the token from `gh auth token` at run
+  time: 5000 requests an hour instead of 60. The token is read inside the helper
+  and never passed on the command line or written to disk, so it stays out of the
+  process list.
+- Failures are reported instead of swallowed. Cached files now carry a
+  structured `status.failure` -- kind, detail, reset time, and whether it came
+  from the repo fetch or the star history -- on schema version 4, and the panel
+  shows it under the repository. Releases are the critical path: a repo whose
+  metadata fails keeps its cached data instead of being blanked, a star-history
+  failure leaves release counts intact, and when both fail the metadata reason
+  is the one shown.
+- Weekly charts cover 12 weeks instead of 8, and the model's history limits, its
+  period windows, and every history/cohort/star-cohort bucket list in the cache
+  schema are capped to match. A test asserts those agree, so the three cannot
+  drift apart again.
+- Star history uses per-day starred-date cohorts when the logged history is too
+  short to fill the selected period, so a young repository no longer charts as a
+  nearly empty window.
+- The chart now carries a header line stating what is plotted, the window, and
+  how much of it is logged -- for example
+  `downloads change · last 30 days · 4/30 buckets logged`. The property already
+  existed but was never attached to anything, so the window length was not
+  shown anywhere in the panel.
+- Removed the dead curl transport code left over from the old fetch pipeline.
+
 ## 0.4.0 - 2026-09-25
 
 - "Refresh now" works on a fresh install. Quickshell's `FileView` never arms its

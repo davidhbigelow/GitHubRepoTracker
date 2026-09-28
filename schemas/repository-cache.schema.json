@@ -6,7 +6,7 @@
   "additionalProperties": false,
   "required": ["schemaVersion", "repo", "category", "added", "created", "current", "status", "history", "cohorts", "starCohorts", "starCohortsUpdatedAt"],
   "properties": {
-    "schemaVersion": { "const": 3 },
+    "schemaVersion": { "const": 4 },
     "repo": { "type": "string", "pattern": "^[^/]+/[^/]+$" },
     "category": { "enum": ["mine", "others"] },
     "added": { "type": "string", "format": "date-time" },
@@ -39,11 +39,33 @@
     "status": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["lastAttemptAt", "lastSuccessAt", "error"],
+      "required": ["lastAttemptAt", "lastSuccessAt", "error", "failure"],
       "properties": {
         "lastAttemptAt": { "$ref": "#/$defs/optionalTimestamp" },
         "lastSuccessAt": { "$ref": "#/$defs/optionalTimestamp" },
-        "error": { "type": "string" }
+        "error": { "type": "string" },
+        "failure": {
+          "description": "Structured diagnosis of the last failed refresh; null once a refresh succeeds. Kept apart from `error` so the UI can name the cause, the reset time and whether only star history was missed.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "detail", "resetAt", "scope"],
+              "properties": {
+                "kind": {
+                  "enum": ["rate-limited", "not-authenticated", "forbidden", "not-found", "network", "unknown"]
+                },
+                "detail": { "type": "string" },
+                "resetAt": { "$ref": "#/$defs/optionalTimestamp" },
+                "scope": {
+                  "description": "fetch: nothing was logged. stars: downloads logged, only star history is missing.",
+                  "enum": ["fetch", "stars"]
+                }
+              }
+            }
+          ]
+        }
       }
     },
     "observation": {
@@ -71,7 +93,7 @@
       "required": ["days", "weeks", "months", "years"],
       "properties": {
         "days": { "type": "array", "maxItems": 30, "items": { "$ref": "#/$defs/observation" } },
-        "weeks": { "type": "array", "maxItems": 8, "items": { "$ref": "#/$defs/observation" } },
+        "weeks": { "type": "array", "maxItems": 12, "items": { "$ref": "#/$defs/observation" } },
         "months": { "type": "array", "maxItems": 12, "items": { "$ref": "#/$defs/observation" } },
         "years": { "type": "array", "items": { "$ref": "#/$defs/observation" } }
       }
@@ -94,7 +116,7 @@
       "required": ["days", "weeks", "months", "years"],
       "properties": {
         "days": { "type": "array", "maxItems": 30, "items": { "$ref": "#/$defs/cohort" } },
-        "weeks": { "type": "array", "maxItems": 8, "items": { "$ref": "#/$defs/cohort" } },
+        "weeks": { "type": "array", "maxItems": 12, "items": { "$ref": "#/$defs/cohort" } },
         "months": { "type": "array", "maxItems": 12, "items": { "$ref": "#/$defs/cohort" } },
         "years": { "type": "array", "items": { "$ref": "#/$defs/cohort" } }
       }
@@ -115,7 +137,7 @@
       "required": ["days", "weeks", "months", "years"],
       "properties": {
         "days": { "type": "array", "maxItems": 30, "items": { "$ref": "#/$defs/starCohort" } },
-        "weeks": { "type": "array", "maxItems": 8, "items": { "$ref": "#/$defs/starCohort" } },
+        "weeks": { "type": "array", "maxItems": 12, "items": { "$ref": "#/$defs/starCohort" } },
         "months": { "type": "array", "maxItems": 12, "items": { "$ref": "#/$defs/starCohort" } },
         "years": { "type": "array", "items": { "$ref": "#/$defs/starCohort" } }
       }

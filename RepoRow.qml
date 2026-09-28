@@ -37,7 +37,28 @@ Item {
     return root.entry.values || []
   }
 
-  implicitHeight: Style.space(40)
+  // Why these numbers stopped moving, and how stale they are. Empty while the
+  // fetch is healthy, so a working repo renders exactly as it always has.
+  readonly property string notice: root.entry && root.entry.failure
+    ? Model.formatFailure(root.entry.failure, root.entry.lastUpdated)
+    : ""
+
+  // A spent budget or a dead connection is worth interrupting for; a rejected
+  // request or a missing repo is just informational.
+  readonly property bool noticeUrgent: root.entry && root.entry.failure
+    && (root.entry.failure.kind === "rate-limited" || root.entry.failure.kind === "network")
+
+  implicitHeight: Style.space(40) + (root.notice ? Style.space(14) : 0)
+
+  // The name/sparkline/total band keeps its own fixed height so a notice can
+  // add a caption line underneath without shifting the row's contents.
+  Item {
+    id: headerBand
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: parent.top
+    height: Style.space(40)
+  }
 
   Rectangle {
     id: hoverFill
@@ -56,7 +77,7 @@ Item {
     height: Style.space(15)
     anchors.left: parent.left
     anchors.leftMargin: Style.space(8)
-    anchors.verticalCenter: parent.verticalCenter
+    anchors.verticalCenter: headerBand.verticalCenter
     radius: Style.space(2)
     color: root.checked ? root.accent : "transparent"
     border.width: 1
@@ -68,7 +89,7 @@ Item {
     width: root.checkable ? Style.space(136) : Style.space(150)
     anchors.left: root.checkable ? checkBox.right : parent.left
     anchors.leftMargin: root.checkable ? Style.space(8) : Style.space(8)
-    anchors.verticalCenter: parent.verticalCenter
+    anchors.verticalCenter: headerBand.verticalCenter
     textFormat: Text.PlainText
     text: root.entry ? root.entry.name : "—"
     color: root.hasData ? root.foreground : root.muted
@@ -83,7 +104,7 @@ Item {
     anchors.leftMargin: Style.space(10)
     anchors.right: totalText.left
     anchors.rightMargin: Style.space(10)
-    anchors.verticalCenter: parent.verticalCenter
+    anchors.verticalCenter: headerBand.verticalCenter
     height: Style.space(24)
 
     Sparkline {
@@ -110,7 +131,7 @@ Item {
     width: Style.space(64)
     anchors.right: parent.right
     anchors.rightMargin: Style.space(8)
-    anchors.verticalCenter: parent.verticalCenter
+    anchors.verticalCenter: headerBand.verticalCenter
     textFormat: Text.PlainText
     text: root.entry ? Model.formatNumber(root.entry.total) : "—"
     color: root.hasData ? root.foreground : root.muted
@@ -134,6 +155,26 @@ Item {
     value: root.entry ? root.entry.total : NaN
     active: root.hasData && hoverArea.containsMouse
     accentColor: root.trendColor
+  }
+
+  // Persistent notice naming the cause and its fix. Deliberately not a timed
+  // flash: "gh auth login" is only actionable if it is still on screen when
+  // the user looks, and a state that changes on a timer is not a state.
+  Text {
+    id: noticeText
+    visible: root.notice !== ""
+    anchors.left: parent.left
+    anchors.leftMargin: Style.space(8)
+    anchors.right: parent.right
+    anchors.rightMargin: Style.space(8)
+    anchors.top: headerBand.bottom
+    anchors.topMargin: Style.space(1)
+    textFormat: Text.PlainText
+    text: root.notice
+    color: root.noticeUrgent ? root.urgent : root.muted
+    font.family: Style.font.family
+    font.pixelSize: Style.font.caption
+    elide: Text.ElideRight
   }
 
   MouseArea {

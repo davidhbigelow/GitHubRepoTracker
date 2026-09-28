@@ -9,9 +9,10 @@ import "Model.js" as Model
 // single store.json the widgets watch for live updates.
 //
 // GitHub API notes:
-//   - release and repository metadata use unauthenticated curl requests.
-//     Historical star acquisitions use the authenticated gh token indirectly
-//     through fetch_star_cohorts.py on each repository refresh.
+//   - one fetch_github_data.py run per repository collects releases, metadata
+//     and historical star cohorts in a single pass. The helper reads the gh
+//     token itself so it never appears in a command line, and falls back to
+//     unauthenticated requests (60/hour) when there is no token (5000/hour).
 //   - asset `download_count` is cumulative-forever, so we can only record its
 //     value when polled. Daily observations build accurate history over time;
 //     GitHub cannot backfill prior download-event dates. Release-asset totals
@@ -37,11 +38,10 @@ Item {
   property string configStamp: ""
 
   property var queue: []
-  property var current: null
-  property var infoTask: null
-  property var starTask: null
-  property string starStdout: ""
-  property string starStderr: ""
+  property var dataTask: null
+  property string dataStdout: ""
+  property string dataStderr: ""
+  property bool loggedAuth: false
   property int defaultRefreshHours: 24
   property bool fetching: false
 
@@ -249,9 +249,7 @@ Item {
   }
 
   function queuedFor(repo) {
-    if (root.current && root.current.repo === repo) return true
-    if (root.infoTask && root.infoTask.repo === repo) return true
-    if (root.starTask && root.starTask.repo === repo) return true
+    if (root.dataTask && root.dataTask.repo === repo) return true
     for (var i = 0; i < root.queue.length; i++) {
       if (root.queue[i].repo === repo) return true
     }
@@ -308,10 +306,8 @@ Item {
 
   function pump() {
     if (root.fetching || root.queue.length === 0) {
-      // Drain: nothing queued, nothing in flight (releases, metadata, and
-      // star-cohort helpers all done) — close out the refresh cycle.
-      if (root.statusActive && !root.fetching && root.queue.length === 0
-        && !root.infoTask && !root.starTask) {
+      // Drain: nothing queued and nothing in flight — close out the cycle.
+      if (root.statusActive && !root.fetching && root.queue.length === 0 && !root.dataTask) {
         root.statusActive = false
         root.statusPending = []
         root.scheduleStatusWrite()
@@ -319,151 +315,135 @@ Item {
       return
     }
     var task = root.queue.shift()
-    root.current = task
+    root.dataTask = task
     root.fetching = true
-    if (!task.page) task.page = 1
-    if (!task.releases) task.releases = []
-    root.startFetch(task)
-  }
-
-  function startFetch(task) {
-    fetchProc.command = Model.fetchCommand(Model.githubUrl(task.repo, task.page))
-    fetchProc.running = true
-  }
-
-  Process {
-    id: fetchProc
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: root.onPageReceived(text)
-    }
-    onExited: function(code) {
-      // Stream finished and consumed the task normally; otherwise report.
-      if (code !== 0 && root.current) root.finishTask(root.current, "HTTP error " + code)
-    }
-  }
-
-  // Repo metadata (stars, created_at): one extra request per refresh, after the
-  // releases finish. Failure just keeps whatever stars/created we already had.
-  Process {
-    id: infoProc
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: root.onInfoReceived(text)
-    }
-    onExited: function(code) {
-      if (code !== 0 && root.infoTask) {
-        var st = root.infoTask
-        root.infoTask = null
-        root.finishObservation(st, null, "metadata HTTP error " + code)
-      }
-    }
-  }
-
-  Process {
-    id: starProc
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: root.starStdout = text
-    }
-    stderr: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: root.starStderr = text
-    }
-    onExited: function(code) {
-      Qt.callLater(function() { root.onStarCohortsExited(code) })
-    }
-  }
-
-  function onPageReceived(raw) {
-    var task = root.current
-    if (!task) return
-    var text = String(raw || "").trim()
-    if (!text) { root.finishTask(task, "empty response"); return }
-    var batch = null
-    try { batch = JSON.parse(text) } catch (e) { root.finishTask(task, "bad JSON"); return }
-    if (!Array.isArray(batch)) { root.finishTask(task, "unexpected API response"); return }
-    task.releases = task.releases.concat(batch)
-    if (batch && batch.length >= 100) {
-      task.page++
-      root.startFetch(task)
-    } else {
-      root.finishTask(task, "")
-    }
-  }
-
-  function finishTask(task, err) {
-    root.current = null
-    if (err) {
-      root.fetching = false
-      var failed = Model.recordFailure(root.cacheDocs[task.repo] || task.doc, err)
-      root.log("failed " + task.repo + ": " + err + " (keeping cached data)")
-      root.cacheAndStore(failed, task.repo)
-      return
-    }
-    var sum = Model.sumReleases(task.releases || [])
-    var doc = Model.migrateCache(task.doc)
-    doc.category = task.category
-    doc.cohorts = sum.cohorts
-    root.fetchInfo(task.repo, doc, sum)
-  }
-
-  // After the releases land, fetch the repo's stars/created date, then cache.
-  function fetchInfo(repo, doc, sum) {
-    root.infoTask = { repo: repo, doc: doc, sum: sum }
-    infoProc.command = Model.fetchCommand(Model.repoInfoUrl(repo))
-    infoProc.running = true
-  }
-
-  function onInfoReceived(raw) {
-    var st = root.infoTask
-    if (!st) return
-    root.infoTask = null
-    var info = Model.parseRepoInfo(raw || "")
-    if (!info) {
-      root.finishObservation(st, null, "invalid metadata response")
-      return
-    }
-    root.fetchStarCohorts(st, info)
+    root.startDataFetch(task)
   }
 
   function helperPath() {
-    var resolved = String(Qt.resolvedUrl("fetch_star_cohorts.py"))
+    var resolved = String(Qt.resolvedUrl("fetch_github_data.py"))
     if (resolved.indexOf("file:///") !== 0 || resolved.indexOf("\0") >= 0) return ""
     try { return decodeURIComponent(resolved.substring(7)) } catch (e) { return "" }
   }
 
-  function fetchStarCohorts(st, info) {
+  function startDataFetch(task) {
     var helper = root.helperPath()
     if (!helper) {
-      root.finishObservation(st, info, "historical stars unavailable: invalid helper path")
+      root.failWholeTask(task, "Cannot locate the fetch helper")
       return
     }
-    root.starTask = { repo: st.repo, doc: st.doc, sum: st.sum, info: info }
-    root.starStdout = ""
-    root.starStderr = ""
-    starProc.command = ["python3", helper, st.repo]
-    starProc.running = true
+    // One subprocess per repository: it reads the token itself and returns
+    // releases, repo metadata and star cohorts together. The token is never in
+    // this command line, so it stays out of /proc.
+    root.dataStdout = ""
+    root.dataStderr = ""
+    dataProc.command = ["python3", helper, task.repo]
+    dataProc.running = true
   }
 
-  function onStarCohortsExited(code) {
-    var st = root.starTask
-    if (!st) return
-    root.starTask = null
-    var parsed = code === 0 ? Model.parseStarCohorts(root.starStdout) : null
-    if (parsed) {
-      st.doc.starCohorts = parsed.starCohorts
-      st.doc.starCohortsUpdatedAt = parsed.collectedAt
-      root.finishObservation(st, st.info, "")
+  Process {
+    id: dataProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.dataStdout = text
+    }
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.dataStderr = text
+    }
+    onExited: function(code) {
+      Qt.callLater(function() { root.onDataExited(code) })
+    }
+  }
+
+  // The helper reports a failure as a JSON diagnosis on stderr; fall back to
+  // reading the wording when it is not one, so an unexpected crash still
+  // reaches the user as something other than silence.
+  function parseDiagnostic(text, exitCode) {
+    var raw = String(text || "").trim()
+    var line = raw.split("\n")[0]
+    try {
+      var parsed = JSON.parse(line)
+      if (parsed && typeof parsed === "object" && parsed.kind) {
+        return { kind: parsed.kind, detail: String(parsed.message || ""),
+          resetAt: String(parsed.resetAt || ""), scope: "fetch" }
+      }
+    } catch (e) {}
+    if (!line) line = exitCode === 0 ? "Invalid fetch helper response" : "Helper exited " + exitCode
+    if (line.length > 240) line = line.substring(0, 240)
+    return Model.classifyStarFailure(line, exitCode)
+  }
+
+  // A repository whose releases could not be fetched records no observation at
+  // all: without them there is no number to log, so the cached data stands.
+  function failWholeTask(task, message, failure) {
+    root.dataTask = null
+    root.fetching = false
+    var failed = Model.recordFailure(root.cacheDocs[task.repo] || task.doc, message, "", failure || null)
+    root.log("failed " + task.repo + ": " + message + " (keeping cached data)")
+    root.cacheAndStore(failed, task.repo)
+  }
+
+  function onDataExited(code) {
+    var task = root.dataTask
+    if (!task) return
+    root.dataTask = null
+    if (code !== 0) {
+      var f = root.parseDiagnostic(root.dataStderr, code)
+      root.failWholeTask(task, Model.formatFailure(f, ""), f)
       return
     }
-    var detail = String(root.starStderr || "").trim().split("\n")[0]
-    if (!detail) detail = code === 0 ? "invalid helper response" : "helper exited " + code
-    if (detail.length > 240) detail = detail.substring(0, 240)
-    root.finishObservation(st, st.info, "historical stars unavailable: " + detail)
+    var payload = null
+    try { payload = JSON.parse(String(root.dataStdout || "")) } catch (e) { payload = null }
+    if (!payload || !Array.isArray(payload.releases)) {
+      root.failWholeTask(task, "Invalid fetch helper response")
+      return
+    }
+
+    var sum = Model.sumReleases(payload.releases)
+    var doc = Model.migrateCache(task.doc)
+    doc.category = task.category
+    doc.cohorts = sum.cohorts
+    if (payload.info) {
+      if (payload.info.created) doc.created = payload.info.created
+    }
+    if (payload.starCohorts) {
+      doc.starCohorts = Model.normalizeStarCohorts(payload.starCohorts)
+      doc.starCohortsUpdatedAt = payload.starCohortsCollectedAt || doc.starCohortsUpdatedAt
+    }
+    if (root.loggedAuth !== (payload.authenticated === true)) {
+      root.loggedAuth = payload.authenticated === true
+      root.log("github api " + (root.loggedAuth ? "authenticated (5000 requests/hour)"
+        : "UNAUTHENTICATED (60 requests/hour) - run: gh auth login"))
+    }
+
+    // Metadata and star history are refinements: report the notice, but keep the
+    // download counts that did land. Metadata outranks stars because it is the
+    // visible star count, and only one notice is shown at a time.
+    var metaError = ""
+    var metaFailure = null
+    var starFailure = null
+    var failures = payload.failures || []
+    for (var i = 0; i < failures.length; i++) {
+      var part = failures[i].part
+      var notice = { kind: failures[i].kind, detail: String(failures[i].message || ""),
+        resetAt: String(failures[i].resetAt || ""), scope: "fetch" }
+      if (part === "stars") {
+        starFailure = { kind: notice.kind, detail: notice.detail, resetAt: notice.resetAt, scope: "stars" }
+      } else {
+        metaError = metaError ? metaError + "; " + notice.detail : notice.detail
+        if (!metaFailure) metaFailure = notice
+      }
+    }
+    if (starFailure && !metaFailure) {
+      metaError = "historical stars unavailable: " + starFailure.detail
+    }
+
+    var st = { repo: task.repo, doc: doc, sum: sum }
+    root.finishObservation(st, payload.info || null, metaError, metaFailure || starFailure)
   }
 
-  function finishObservation(st, info, metadataError) {
+  function finishObservation(st, info, metadataError, failure) {
     var knownStars = st.doc.current ? st.doc.current.stars : 0
     if (info && info.created) st.doc.created = info.created
     st.doc = Model.recordObservation(st.doc, {
@@ -471,7 +451,7 @@ Item {
       stars: info ? info.stars : knownStars,
       releases: st.sum.releaseCount,
       assets: st.sum.assetCount
-    }, Model.nowIso(), metadataError)
+    }, Model.nowIso(), metadataError, failure)
     root.cacheAndStore(st.doc, st.repo)
   }
 

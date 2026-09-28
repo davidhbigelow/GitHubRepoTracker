@@ -21,6 +21,45 @@ const context = vm.createContext({
 });
 vm.runInContext(fs.readFileSync(path.join(root, "Model.js"), "utf8"), context);
 
+// A window size is stated in three places: what is kept (HISTORY_LIMITS), what
+// is drawn (PERIOD_WINDOWS, via periodDomain) and what the schema permits. The
+// weekly view once read 8 weeks because periodDomain hardcoded 8 while the
+// constant said something else, so pin all three together. Observations,
+// release cohorts and star cohorts share the same bucketing, so the schema caps
+// must agree with each other too.
+{
+  const schema = JSON.parse(
+    fs.readFileSync(path.join(root, "schemas", "repository-cache.schema.json"), "utf8"),
+  );
+  const buckets = ["days", "weeks", "months", "years"];
+  const periods = { days: "daily", weeks: "weekly", months: "monthly", years: "annual" };
+  assert.equal(schema.properties.schemaVersion.const, context.SCHEMA_VERSION);
+
+  for (const bucket of buckets) {
+    const limit = context.HISTORY_LIMITS[bucket];
+    const caps = ["history", "cohorts", "starCohorts"].map(
+      (name) => schema.$defs[name].properties[bucket].maxItems,
+    );
+    for (const cap of caps) {
+      if (limit) assert.equal(cap, limit, `schema maxItems for ${bucket}`);
+      // 0 means "keep everything", so the schema must not impose a cap.
+      else assert.equal(cap, undefined, `schema must not cap ${bucket}`);
+    }
+    if (!limit) continue;
+    // The drawn domain can never be wider than the history behind it.
+    const period = periods[bucket];
+    assert.equal(context.PERIOD_WINDOWS[period], limit, `PERIOD_WINDOWS for ${period}`);
+    assert.equal(
+      context.periodDomain(period, [], "2026-09-14T12:00:00.000Z").slots, limit,
+    );
+  }
+  // Annual is "all years", so it widens with the data rather than a constant.
+  assert.equal(context.periodDomain("annual", [], "2026-09-14T12:00:00.000Z").slots, 1);
+  assert.equal(
+    context.periodDomain("annual", [Date.UTC(2023, 0, 1)], "2026-09-14T12:00:00.000Z").slots, 4,
+  );
+}
+
 const config = context.parseConfig(JSON.stringify({
   categories: { mine: ["owner/project"], others: ["other/tool"] },
   refreshHours: 12,
@@ -35,17 +74,56 @@ assert.equal(context.sanitizeRepo(" owner/project ").repo, "owner/project");
 assert.equal(context.sanitizeRepo("missing-slash").valid, false);
 assert.equal(context.sanitizeRepo("owner/project/extra").valid, false);
 
+assert.equal(context.miniSpark([], 9), "\u25cb");
+assert.equal(context.miniSpark([42], 9), "\u25cf");
+
+// The notice has to name the cause, its fix and how stale the data is, and must
+// not vanish on a timer: it is a plain string built from the diagnosis.
+assert.equal(context.formatFailure(null, ""), "");
+const localClock = (iso) => {
+  const d = new Date(iso);
+  return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+};
+const rateLimited = { kind: "rate-limited", detail: "GitHub API rate limit reached",
+  resetAt: "2026-09-28T00:03:15.000Z", scope: "fetch" };
+const notice = context.formatFailure(rateLimited, "2026-09-20T00:00:00.000Z");
+assert.ok(notice.startsWith("Rate limited by GitHub, resets " + localClock(rateLimited.resetAt)), notice);
+// The age depends on when the suite runs, so match its shape rather than a
+// hard-coded day count.
+assert.match(notice, /, showing data from \d+[mhd] ago$/);
 assert.equal(
-  context.githubUrl("owner/project", 2),
-  "https://api.github.com/repos/owner/project/releases?per_page=100&page=2",
+  context.formatFailure({ kind: "not-authenticated", detail: "x", resetAt: "", scope: "fetch" }, ""),
+  "Not signed in to GitHub, run: gh auth login",
 );
-const command = Array.from(context.fetchCommand("https://api.github.com/example"));
-assert.equal(command[0], "curl");
-assert.equal(command.includes("--max-filesize"), true);
-assert.equal(command.some((part) => part.includes("Authorization")), false);
-assert.equal(command.some((part) => part.includes("X-GitHub-Api-Version")), true);
-assert.equal(context.miniSpark([], 9), "○");
-assert.equal(context.miniSpark([42], 9), "●");
+// A failure scoped to "stars" must not imply the download numbers are stale.
+assert.equal(
+  context.formatFailure({ ...rateLimited, scope: "stars" }, "2026-09-20T00:00:00.000Z"),
+  "Rate limited by GitHub, resets " + localClock(rateLimited.resetAt) + ", star history not updated",
+);
+
+// The helper reports its own failure, so the kind is read back out of its
+// stderr. A 403 is only a spent budget when GitHub says the limit was hit.
+const starLimited = context.classifyStarFailure(
+  '{"kind":"rate-limited","message":"GitHub API rate limit reached, resets 1790553795",'
+  + '"part":"releases","resetAt":"2026-09-28T00:03:15Z"}', 1,
+);
+assert.equal(starLimited.kind, "rate-limited");
+assert.equal(starLimited.scope, "stars");
+assert.equal(starLimited.resetAt, "2026-09-28T00:03:15.000Z");
+assert.equal(
+  context.classifyStarFailure("GitHub API rate limit reached, resets 1790553795", 1).kind,
+  "rate-limited",
+);
+assert.equal(
+  context.classifyStarFailure("GitHub API rate limit reached, resets 1790553795", 1).resetAt,
+  "2026-09-28T00:03:15.000Z",
+);
+assert.equal(context.classifyStarFailure("GitHub API returned HTTP 401", 1).kind, "not-authenticated");
+assert.equal(context.classifyStarFailure("GitHub API returned HTTP 404", 1).kind, "not-found");
+// A 403 with no limit wording is a refusal, not a budget problem, and the
+// fallback cannot tell the two apart from a bare status line.
+assert.equal(context.classifyStarFailure("GitHub refused the request (403)", 1).kind, "unknown");
+assert.equal(context.classifyStarFailure("could not obtain a token from gh auth", 1).kind, "unknown");
 
 const summary = context.sumReleases([
   {
@@ -81,7 +159,7 @@ assert.equal(cohortDaily.steps.length, 30);
 assert.equal(cohortDaily.totals.filter((value) => value === 0).length, 29);
 assert.equal(cohortDaily.totals.at(-1), 20);
 const cohortWeekly = context.cohortTimeline([cohortEntry], "releases", "weekly", "2026-09-14T20:00:00Z");
-assert.equal(cohortWeekly.steps.length, 8);
+assert.equal(cohortWeekly.steps.length, 12);
 assert.equal(cohortWeekly.totals.at(-1), 2);
 const cohortMonthly = context.cohortTimeline([cohortEntry], "dl", "monthly", "2026-09-14T20:00:00Z");
 assert.equal(cohortMonthly.steps.length, 12);
@@ -234,7 +312,7 @@ const legacy = {
   error: "old error",
 };
 const migrated = context.parseCache(JSON.stringify(legacy));
-assert.equal(migrated.schemaVersion, 3);
+assert.equal(migrated.schemaVersion, 4);
 assert.deepEqual(
   { ...migrated.current },
   { downloads: 120, stars: 12, releases: 4, assets: 9, observedAt: legacy.lastUpdated },
@@ -274,7 +352,7 @@ for (let i = 0; i < 40; i += 1) {
   bounded = context.recordObservation(bounded, { downloads: i, stars: i, releases: i, assets: i }, at);
 }
 assert.equal(bounded.history.days.length, 30);
-assert.equal(bounded.history.weeks.length, 8);
+assert.equal(bounded.history.weeks.length, 12);
 assert.equal(bounded.history.months.length, 12);
 assert.equal(bounded.history.years.length >= 4, true);
 
@@ -282,8 +360,8 @@ const dailyDomain = context.periodDomain("daily", [], "2026-09-14T12:00:00.000Z"
 assert.equal(dailyDomain.slots, 30);
 assert.equal((dailyDomain.end - dailyDomain.start) / 86400000, 29);
 const weeklyDomain = context.periodDomain("weekly", [], "2026-09-14T12:00:00.000Z");
-assert.equal(weeklyDomain.slots, 8);
-assert.equal((weeklyDomain.end - weeklyDomain.start) / 86400000, 49);
+assert.equal(weeklyDomain.slots, 12);
+assert.equal((weeklyDomain.end - weeklyDomain.start) / 86400000, 77);
 const monthlyDomain = context.periodDomain("monthly", [], "2026-09-14T12:00:00.000Z");
 assert.equal(monthlyDomain.slots, 12);
 assert.equal(new Date(monthlyDomain.end).toISOString(), "2026-09-14T00:00:00.000Z");
@@ -299,6 +377,15 @@ bounded = context.recordFailure(bounded, "HTTP error 22", "2026-12-31T00:00:00.0
 assert.equal(JSON.stringify({ current: bounded.current, history: bounded.history }), beforeFailure);
 assert.equal(bounded.status.lastAttemptAt, "2026-12-31T00:00:00.000Z");
 assert.equal(bounded.status.error, "HTTP error 22");
+// A structured diagnosis survives the cache round-trip, and a later success
+// clears it so a recovered repo stops showing a notice.
+assert.equal(bounded.status.failure, null);
+bounded = context.recordFailure(bounded, "Rate limited by GitHub", "2026-12-31T00:00:00.000Z", rateLimited);
+assert.equal(bounded.status.failure.kind, "rate-limited");
+assert.equal(context.migrateCache(bounded).status.failure.resetAt, "2026-09-28T00:03:15.000Z");
+const cleared = context.recordObservation(bounded, { downloads: 1, stars: 2, releases: 3, assets: 4 }, "2026-12-31T01:00:00.000Z");
+assert.equal(cleared.status.failure, null);
+assert.equal(cleared.status.error, "");
 
 let first = context.emptyCache("owner/project", "mine");
 let second = context.emptyCache("other/tool", "others");
@@ -314,7 +401,7 @@ first.starCohortsUpdatedAt = helperResult.collectedAt;
 second.starCohorts = helperResult.starCohorts;
 second.starCohortsUpdatedAt = helperResult.collectedAt;
 const store = context.buildStore(config, { "owner/project": first, "other/tool": second });
-assert.equal(store.schemaVersion, 3);
+assert.equal(store.schemaVersion, 4);
 assert.equal(store.totals.all, 40);
 assert.equal(store.history.weeks.length, 2);
 assert.equal(store.history.weeks[1].downloads, 40);
@@ -331,7 +418,67 @@ assert.equal(observedSelected.source, "observed");
 assert.deepEqual(Array.from(observedSelected.totals), [30, 40]);
 assert.deepEqual(Array.from(context.displayTimeline(observedSelected, false).totals), [0, 10]);
 assert.deepEqual(Array.from(context.displayTimeline(observedSelected, true).totals), [30, 40]);
-assert.equal(context.selectedTimeline(entries, "stars", "weekly", "2026-08-10T20:00:00Z").source, "observed");
+// Two logged weeks cannot fill a 12-week window, and the real star history is
+// public and dense, so the daily/weekly star view prefers the reconstruction
+// over a nearly empty chart.
+assert.equal(context.selectedTimeline(entries, "stars", "weekly", "2026-08-10T20:00:00Z").source, "star-cohort");
+// Downloads have no such history: their reconstruction is lifetime-allocated
+// asset counts, so the measured points are kept even though they are sparse.
+assert.equal(context.selectedTimeline(entries, "dl", "weekly", "2026-08-10T20:00:00Z").source, "observed");
+
+// Once observed can fill the window, it wins again: a measurement beats a
+// reconstruction, so a tracker left running for a month returns to observed.
+{
+  const filled = [0, 1, 2, 3].map((i) => {
+    const at = new Date(Date.UTC(2026, 5, 1 + i * 21)).toISOString();
+    return context.recordObservation(
+      context.emptyCache("owner/project", "mine"),
+      { downloads: i, stars: 10 + i, releases: i, assets: i },
+      at,
+    );
+  });
+  const fillEntries = [filled[3]];
+  fillEntries[0].starCohorts = helperResult.starCohorts;
+  fillEntries[0].starCohortsUpdatedAt = helperResult.collectedAt;
+  // 4 logged days still cannot fill the 30-day daily window.
+  assert.equal(
+    context.selectedTimeline(fillEntries, "stars", "daily", "2026-09-14T20:00:00Z").source,
+    "star-cohort",
+  );
+  // The annual window follows the data: one observed year cannot fill it, so the
+  // real year history wins and can reach back further than the tracker has run.
+  assert.equal(
+    context.selectedTimeline(fillEntries, "stars", "annual", "2026-09-14T20:00:00Z").source,
+    "star-cohort",
+  );
+  // Two observed years do fill it, and a measurement beats a reconstruction.
+  let twoYears = context.emptyCache("owner/project", "mine");
+  for (const year of [2024, 2025]) {
+    twoYears = context.recordObservation(
+      twoYears,
+      { downloads: 1, stars: 10, releases: 1, assets: 1 },
+      new Date(Date.UTC(year, 2, 1)).toISOString(),
+    );
+  }
+  twoYears.starCohorts = helperResult.starCohorts;
+  twoYears.starCohortsUpdatedAt = helperResult.collectedAt;
+  assert.equal(
+    context.selectedTimeline([twoYears], "stars", "annual", "2026-09-14T20:00:00Z").source,
+    "observed",
+  );
+}
+
+// Star cohorts that do not cover the requested collection must not be used:
+// a yearly-only reconstruction would render a weekly view as all zeros.
+{
+  const yearlyOnly = {
+    history: { days: [], weeks: [], months: [], years: [] },
+    starCohorts: { days: [], weeks: [], months: [], years: [{ bucket: "2026", stars: 5 }] },
+    starCohortsUpdatedAt: helperResult.collectedAt,
+  };
+  assert.equal(context.selectedTimeline([yearlyOnly], "stars", "weekly", "2026-08-10T20:00:00Z").source, "observed");
+  assert.equal(context.selectedTimeline([yearlyOnly], "stars", "annual", "2026-08-10T20:00:00Z").source, "star-cohort");
+}
 
 // Staggered observation start: an older repo's earlier years must survive in
 // the group annual timeline (a newer repo simply contributes nothing there).
